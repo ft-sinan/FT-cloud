@@ -1,0 +1,53 @@
+name: Android CI
+
+on:
+  push:
+    branches:
+      - main
+      - master
+      - "arena/**"
+  pull_request:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: "17"
+          distribution: "temurin"
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Make gradlew executable
+        run: chmod +x gradlew
+
+      - name: Run unit tests
+        run: ./gradlew testDebugUnitTest --stacktrace
+
+      - name: Run Android Lint
+        run: ./gradlew lintDebug --stacktrace
+
+      - name: Assemble Debug & Release APKs
+        run: ./gradlew assembleDebug assembleRelease --stacktrace
+
+      - name: Upload Debug APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: FT-Cloud-Debug-APK
+          path: app/build/outputs/apk/debug/*.apk
+
+      - name: Upload Release APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: FT-Cloud-Release-APK
+          path: app/build/outputs/apk/release/*.apk

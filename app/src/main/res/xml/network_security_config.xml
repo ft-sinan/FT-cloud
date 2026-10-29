@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- Strict HTTPS for all external internet traffic (api.telegram.org) -->
+    <base-config cleartextTrafficPermitted="false" />
+
+    <!-- Allow loopback HTTP strictly for FT-Cloud's local Media3 byte-range stream proxy -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">127.0.0.1</domain>
+        <domain includeSubdomains="false">localhost</domain>
+    </domain-config>
+</network-security-config>

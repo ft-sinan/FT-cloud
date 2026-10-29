@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <cache-path
+        name="stream_cache"
+        path="stream_chunks/" />
+    <cache-path
+        name="shared_exports"
+        path="exports/" />
+    <files-path
+        name="downloads"
+        path="downloads/" />
+    <external-files-path
+        name="external_downloads"
+        path="Downloads/" />
+</paths>
