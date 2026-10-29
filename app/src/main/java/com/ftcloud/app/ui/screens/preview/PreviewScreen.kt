@@ -55,7 +55,6 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -413,8 +412,9 @@ private fun PdfCloudPreview(
     file: DriveFile,
 ) {
     val context = LocalContext.current
-    val pagesState by produceState<Result<List<Bitmap>>?>(initialValue = null, key1 = file.id) {
-        value = withContext(Dispatchers.IO) {
+    var pagesState by remember(file.id) { mutableStateOf<Result<List<Bitmap>>?>(null) }
+    LaunchedEffect(file.id) {
+        pagesState = withContext(Dispatchers.IO) {
             runCatching {
                 val exportDir = File(context.cacheDir, "exports").apply { mkdirs() }
                 val pdfFile = File(exportDir, "preview_${file.id}.pdf")
@@ -502,8 +502,9 @@ private fun TextCloudPreview(
     onCopyAll: (String) -> Unit,
 ) {
     val context = LocalContext.current
-    val textState by produceState<Result<String>?>(initialValue = null, key1 = file.id) {
-        value = withContext(Dispatchers.IO) {
+    var textState by remember(file.id) { mutableStateOf<Result<String>?>(null) }
+    LaunchedEffect(file.id) {
+        textState = withContext(Dispatchers.IO) {
             runCatching {
                 if (file.sizeBytes > 2 * 1024 * 1024) {
                     throw IllegalStateException("File exceeds 2 MB inline text preview limit. Download to view full file.")
