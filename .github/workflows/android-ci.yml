@@ -20,7 +20,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           java-version: "17"
           distribution: "temurin"
@@ -36,6 +36,15 @@ jobs:
 
       - name: Run Android Lint
         run: ./gradlew lintDebug --stacktrace
+
+      - name: Surface Lint errors as annotations on failure
+        if: failure()
+        run: |
+          if [ -f app/build/reports/lint-results-debug.txt ]; then
+            grep -E "Error:" app/build/reports/lint-results-debug.txt | head -n 20 | while IFS= read -r line; do
+              echo "::error::$line"
+            done
+          fi
 
       - name: Assemble Debug & Release APKs
         run: ./gradlew assembleDebug assembleRelease --stacktrace
