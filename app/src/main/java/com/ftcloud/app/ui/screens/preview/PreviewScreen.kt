@@ -3,6 +3,7 @@ package com.ftcloud.app.ui.screens.preview
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.pdf.PdfRenderer
+import android.net.Uri
 import android.os.ParcelFileDescriptor
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -28,6 +29,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.automirrored.outlined.OpenInNew
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.AudioFile
 import androidx.compose.material.icons.outlined.ContentCopy
@@ -43,6 +45,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -76,14 +79,18 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.FileProvider
 import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.PlaybackParameters
+import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
+import com.ftcloud.app.core.model.AppSettings
 import com.ftcloud.app.core.model.DriveFile
 import com.ftcloud.app.core.model.FileCategory
 import com.ftcloud.app.core.model.FormatUtils
+import com.ftcloud.app.core.telegram.BOT_API_MAX_DOWNLOAD_BYTES
 import com.ftcloud.app.di.FTCloudContainer
 import com.ftcloud.app.ui.components.CategoryIconBadge
 import com.ftcloud.app.ui.components.FileDetailsSheet
@@ -105,10 +112,40 @@ fun PreviewScreen(
     val snackbarHostState = remember { SnackbarHostState() }
 
     val file by container.driveRepository.observeFileById(fileId).collectAsState(initial = null)
+    val settings by container.settingsRepository.settingsFlow.collectAsState(initial = AppSettings())
+    var primaryMessageId by remember(fileId) { mutableStateOf<Long?>(null) }
+    var forceInlineRendition by remember(fileId) { mutableStateOf(false) }
     var showDetails by remember { mutableStateOf(false) }
     var isPreparingShare by remember { mutableStateOf(false) }
 
+    LaunchedEffect(fileId) {
+        primaryMessageId = container.driveRepository.getPrimaryTelegramMessageId(fileId)
+    }
+
     val currentFile = file
+    val telegramWebUrl = remember(settings.channelId, primaryMessageId) {
+        primaryMessageId?.let { FormatUtils.buildTelegramMessageUrl(settings.channelId, it) }
+    }
+    val openInTelegramAction: (() -> Unit)? = if (primaryMessageId != null && telegramWebUrl != null) {
+        {
+            val deepLink = FormatUtils.buildTelegramAppDeepLink(settings.channelId, primaryMessageId!!)
+            val launchedApp = if (deepLink != null) {
+                runCatching {
+                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(deepLink)))
+                    true
+                }.getOrDefault(false)
+            } else {
+                false
+            }
+            if (!launchedApp) {
+                runCatching {
+                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(telegramWebUrl)))
+                }
+            }
+        }
+    } else {
+        null
+    }
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -128,6 +165,14 @@ fun PreviewScreen(
                 },
                 actions = {
                     if (currentFile != null) {
+                        if (openInTelegramAction != null) {
+                            IconButton(onClick = openInTelegramAction) {
+                                Icon(
+                                    Icons.AutoMirrored.Outlined.OpenInNew,
+                                    contentDescription = "Open in Telegram",
+                                )
+                            }
+                        }
                         IconButton(onClick = {
                             scope.launch {
                                 container.driveRepository.toggleFileStar(currentFile.id, !currentFile.isStarred)
@@ -196,41 +241,58 @@ fun PreviewScreen(
                 val streamUrl = remember(currentFile.id) {
                     container.streamProxy.buildStreamUrl(currentFile.id)
                 }
+                val isLegacyOver20Mb = currentFile.chunkCount == 1 &&
+                    currentFile.sizeBytes > BOT_API_MAX_DOWNLOAD_BYTES &&
+                    openInTelegramAction != null
 
-                when (currentFile.category) {
-                    FileCategory.IMAGE -> ZoomableImagePreview(
-                        streamUrl = streamUrl,
-                        contentDescription = currentFile.name,
-                    )
-
-                    FileCategory.VIDEO, FileCategory.AUDIO -> Media3StreamPlayer(
+                if (isLegacyOver20Mb && !forceInlineRendition) {
+                    LegacyLargeChannelMediaCard(
                         file = currentFile,
-                        streamUrl = streamUrl,
+                        onOpenInTelegram = openInTelegramAction!!,
+                        onTryInlineStream = if (currentFile.category == FileCategory.VIDEO) {
+                            { forceInlineRendition = true }
+                        } else {
+                            null
+                        },
                     )
+                } else {
+                    when (currentFile.category) {
+                        FileCategory.IMAGE -> ZoomableImagePreview(
+                            streamUrl = streamUrl,
+                            contentDescription = currentFile.name,
+                        )
 
-                    FileCategory.PDF -> PdfCloudPreview(
-                        container = container,
-                        file = currentFile,
-                    )
+                        FileCategory.VIDEO, FileCategory.AUDIO -> Media3StreamPlayer(
+                            file = currentFile,
+                            streamUrl = streamUrl,
+                            onOpenInTelegram = openInTelegramAction,
+                        )
 
-                    FileCategory.CODE -> TextCloudPreview(
-                        container = container,
-                        file = currentFile,
-                        onCopyAll = { text ->
-                            clipboard.setText(AnnotatedString(text))
-                            scope.launch { snackbarHostState.showSnackbar("Copied to clipboard") }
-                        }
-                    )
+                        FileCategory.PDF -> PdfCloudPreview(
+                            container = container,
+                            file = currentFile,
+                        )
 
-                    else -> BinaryFileSummaryCard(
-                        file = currentFile,
-                        onDownload = {
-                            scope.launch {
-                                val dest = container.driveRepository.enqueueDownloadToDevice(currentFile)
-                                snackbarHostState.showSnackbar("Queued download to ${dest.name}")
+                        FileCategory.CODE -> TextCloudPreview(
+                            container = container,
+                            file = currentFile,
+                            onCopyAll = { text ->
+                                clipboard.setText(AnnotatedString(text))
+                                scope.launch { snackbarHostState.showSnackbar("Copied to clipboard") }
                             }
-                        }
-                    )
+                        )
+
+                        else -> BinaryFileSummaryCard(
+                            file = currentFile,
+                            onDownload = {
+                                scope.launch {
+                                    val dest = container.driveRepository.enqueueDownloadToDevice(currentFile)
+                                    snackbarHostState.showSnackbar("Queued download to ${dest.name}")
+                                }
+                            },
+                            onOpenInTelegram = openInTelegramAction,
+                        )
+                    }
                 }
             }
         }
@@ -302,9 +364,11 @@ private fun ZoomableImagePreview(
 private fun Media3StreamPlayer(
     file: DriveFile,
     streamUrl: String,
+    onOpenInTelegram: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     var playbackSpeed by remember { mutableFloatStateOf(1.0f) }
+    var playbackFailed by remember(streamUrl) { mutableStateOf(false) }
 
     val exoPlayer = remember(streamUrl) {
         ExoPlayer.Builder(context).build().apply {
@@ -319,9 +383,25 @@ private fun Media3StreamPlayer(
     }
 
     DisposableEffect(exoPlayer) {
+        val listener = object : Player.Listener {
+            override fun onPlayerError(error: PlaybackException) {
+                playbackFailed = true
+            }
+        }
+        exoPlayer.addListener(listener)
         onDispose {
+            exoPlayer.removeListener(listener)
             exoPlayer.release()
         }
+    }
+
+    if (playbackFailed && onOpenInTelegram != null) {
+        LegacyLargeChannelMediaCard(
+            file = file,
+            onOpenInTelegram = onOpenInTelegram,
+            onTryInlineStream = null,
+        )
+        return
     }
 
     Column(
@@ -566,6 +646,7 @@ private fun TextCloudPreview(
 private fun BinaryFileSummaryCard(
     file: DriveFile,
     onDownload: () -> Unit,
+    onOpenInTelegram: (() -> Unit)? = null,
 ) {
     Card(
         modifier = Modifier
@@ -597,6 +678,74 @@ private fun BinaryFileSummaryCard(
                 Icon(Icons.Outlined.Download, contentDescription = null)
                 Spacer(Modifier.width(8.dp))
                 Text("Save to Device Downloads")
+            }
+            if (onOpenInTelegram != null) {
+                OutlinedButton(onClick = onOpenInTelegram) {
+                    Icon(Icons.AutoMirrored.Outlined.OpenInNew, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Open Original Post in Telegram")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun LegacyLargeChannelMediaCard(
+    file: DriveFile,
+    onOpenInTelegram: () -> Unit,
+    onTryInlineStream: (() -> Unit)?,
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(24.dp),
+        shape = RoundedCornerShape(20.dp),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            CategoryIconBadge(
+                category = file.category,
+                modifier = Modifier.size(64.dp),
+            )
+            Text(file.name, style = MaterialTheme.typography.titleLarge)
+            val metaParts = buildList {
+                if (file.sizeBytes > 0L) add(FormatUtils.formatBytes(file.sizeBytes))
+                if (file.width != null && file.height != null) add("${file.width}×${file.height}")
+                if (file.durationMs != null) add(FormatUtils.formatDuration(file.durationMs))
+            }
+            if (metaParts.isNotEmpty()) {
+                Text(
+                    text = metaParts.joinToString(" • "),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
+            Text(
+                text = "This pre-existing channel post was uploaded without 19 MB chunking and exceeds Telegram's 20 MB Bot API direct download cap. You can play or download it at full speed directly inside Telegram.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Button(
+                onClick = onOpenInTelegram,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Icon(Icons.AutoMirrored.Outlined.OpenInNew, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("Open & Play in Telegram")
+            }
+            if (onTryInlineStream != null) {
+                OutlinedButton(
+                    onClick = onTryInlineStream,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("Try Compressed Rendition Inline")
+                }
             }
         }
     }

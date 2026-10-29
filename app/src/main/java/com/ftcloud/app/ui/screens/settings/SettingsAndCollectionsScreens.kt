@@ -1,5 +1,7 @@
 package com.ftcloud.app.ui.screens.settings
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -40,6 +42,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -63,11 +66,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.ftcloud.app.core.model.AppSettings
 import com.ftcloud.app.core.model.AppThemeMode
 import com.ftcloud.app.core.model.FormatUtils
+import com.ftcloud.app.core.sync.ChannelScanScheduler
 import com.ftcloud.app.di.FTCloudContainer
 import com.ftcloud.app.ui.components.CategoryIconBadge
 import kotlinx.coroutines.launch
@@ -80,11 +85,14 @@ fun SettingsScreen(
     onOpenStarred: () -> Unit,
     onOpenTrash: () -> Unit,
 ) {
+    val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
     val botStatuses by container.swarmManager.runtimeStatuses.collectAsState()
 
     var cacheUsedBytes by remember { mutableLongStateOf(container.driveRepository.getCurrentCacheBytes()) }
+    var isImportingJson by remember { mutableStateOf(false) }
+    var isSyncingUpdates by remember { mutableStateOf(false) }
     var showAddBotDialog by remember { mutableStateOf(false) }
     var newBotToken by rememberSaveable { mutableStateOf("") }
     var showEncryptionDialog by remember { mutableStateOf(false) }
@@ -92,6 +100,28 @@ fun SettingsScreen(
     var showRestoreDialog by remember { mutableStateOf(false) }
     var restorePassphraseInput by rememberSaveable { mutableStateOf("") }
     var showDisconnectConfirm by remember { mutableStateOf(false) }
+
+    val exportJsonLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument(),
+    ) { pickedUri ->
+        if (pickedUri != null) {
+            isImportingJson = true
+            scope.launch {
+                runCatching {
+                    val stream = context.contentResolver.openInputStream(pickedUri)
+                        ?: error("Unable to open selected JSON file")
+                    stream.use { container.channelMediaImporter.importTelegramExportJson(it) }
+                }.onSuccess { res ->
+                    snackbarHostState.showSnackbar(
+                        "Imported ${res.importedFiles} media items (${res.skippedExisting} already indexed)"
+                    )
+                }.onFailure { err ->
+                    snackbarHostState.showSnackbar(err.message ?: "Failed to import Telegram export JSON")
+                }
+                isImportingJson = false
+            }
+        }
+    }
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -235,6 +265,153 @@ fun SettingsScreen(
                             }
                             OutlinedButton(onClick = onOpenTrash, modifier = Modifier.weight(1f)) {
                                 Text("Trash Bin")
+                            }
+                        }
+                    }
+                }
+            }
+
+            item {
+                Card(shape = RoundedCornerShape(18.dp)) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Text(
+                            text = "Import Pre-Existing Channel Media",
+                            style = MaterialTheme.typography.titleMedium,
+                        )
+                        Text(
+                            text = "Already have 7,000+ photos, videos, or files in this channel from Telegram or another app? Bring them into 'Imported from Channel' and your Gallery with zero re-uploading:",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+
+                        FilledTonalButton(
+                            enabled = !isImportingJson,
+                            onClick = {
+                                exportJsonLauncher.launch(arrayOf("application/json", "*/*"))
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(
+                                if (isImportingJson) {
+                                    "Importing result.json…"
+                                } else {
+                                    "1. Instant Import Telegram Export (result.json)"
+                                }
+                            )
+                        }
+                        Text(
+                            text = "Fastest for 7,000+ items (~2 seconds, zero rate limits): In Telegram Desktop → Export Chat History → JSON only (uncheck media downloads) → pick result.json here.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+
+                        HorizontalDivider()
+
+                        OutlinedButton(
+                            enabled = !isSyncingUpdates,
+                            onClick = {
+                                isSyncingUpdates = true
+                                scope.launch {
+                                    runCatching { container.channelMediaImporter.syncPendingBotUpdates() }
+                                        .onSuccess { res ->
+                                            snackbarHostState.showSnackbar(
+                                                "Imported ${res.importedFiles} items • Turbo DM ready on ${res.detectedTurboDmBots} bot(s)"
+                                            )
+                                        }
+                                        .onFailure { err ->
+                                            snackbarHostState.showSnackbar(err.message ?: "Update sync failed")
+                                        }
+                                    isSyncingUpdates = false
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(
+                                if (isSyncingUpdates) {
+                                    "Syncing Bot Updates…"
+                                } else {
+                                    "2. Sync Forwarded Batches & /start Turbo DM"
+                                }
+                            )
+                        }
+                        Text(
+                            text = buildString {
+                                append("Mobile batch tip: Forward up to 100 channel posts at a time to any swarm bot, or send /start to your bots in Telegram to enable Turbo DM scanning ")
+                                append("(${settings.turboDmBotCount}/${settings.botCount} bots active).")
+                            },
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+
+                        HorizontalDivider()
+
+                        Text(
+                            text = "3. Background Bot Swarm History Scanner (No PC Needed)",
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        if (settings.channelScanMaxId > 0L) {
+                            val progress = (settings.channelScanCheckedCount.toFloat() /
+                                settings.channelScanMaxId.toFloat()).coerceIn(0f, 1f)
+                            LinearProgressIndicator(
+                                progress = { progress },
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
+                        if (!settings.channelScanStatus.isNullOrBlank()) {
+                            Text(
+                                text = settings.channelScanStatus,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.primary,
+                            )
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            if (settings.channelScanRunning) {
+                                OutlinedButton(
+                                    onClick = {
+                                        scope.launch {
+                                            container.settingsRepository.updateChannelScanState(
+                                                running = false,
+                                                status = "Pausing scanner…",
+                                            )
+                                            ChannelScanScheduler.cancel(context)
+                                        }
+                                    },
+                                    modifier = Modifier.weight(1f),
+                                ) {
+                                    Text("Pause Scan")
+                                }
+                            } else {
+                                FilledTonalButton(
+                                    onClick = {
+                                        scope.launch {
+                                            container.settingsRepository.updateChannelScanState(
+                                                running = true,
+                                                status = "Starting newest-first channel scan…",
+                                            )
+                                            ChannelScanScheduler.startOrResume(context)
+                                        }
+                                    },
+                                    modifier = Modifier.weight(1f),
+                                ) {
+                                    Text(if (settings.channelScanCursorId > 0L) "Resume Scan" else "Scan Channel")
+                                }
+                            }
+
+                            if (settings.channelScanCursorId > 0L || settings.channelScanCheckedCount > 0) {
+                                OutlinedButton(
+                                    onClick = {
+                                        scope.launch {
+                                            ChannelScanScheduler.cancel(context)
+                                            container.settingsRepository.resetChannelScanProgress()
+                                            snackbarHostState.showSnackbar("Reset channel scanner cursor")
+                                        }
+                                    },
+                                ) {
+                                    Text("Reset")
+                                }
                             }
                         }
                     }

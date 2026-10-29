@@ -132,6 +132,9 @@ interface FileDao {
     @Query("UPDATE files SET isTrashed = :trashed, updatedAt = :updatedAt WHERE id = :id")
     suspend fun setTrashed(id: String, trashed: Boolean, updatedAt: Long)
 
+    @Query("UPDATE files SET sizeBytes = :sizeBytes, updatedAt = :updatedAt WHERE id = :id")
+    suspend fun updateFileSize(id: String, sizeBytes: Long, updatedAt: Long)
+
     @Query("DELETE FROM files WHERE id = :id")
     suspend fun deleteById(id: String)
 
@@ -159,6 +162,12 @@ interface ChunkDao {
     @Query("SELECT * FROM file_chunks ORDER BY driveFileId, chunkIndex ASC")
     suspend fun getAllChunksSnapshot(): List<FileChunkEntity>
 
+    @Query("SELECT telegramMessageId FROM file_chunks WHERE telegramMessageId > 0")
+    suspend fun getAllImportedMessageIds(): List<Long>
+
+    @Query("SELECT telegramMessageId FROM file_chunks WHERE driveFileId = :driveFileId ORDER BY chunkIndex ASC LIMIT 1")
+    suspend fun getPrimaryMessageIdForFile(driveFileId: String): Long?
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertChunk(chunk: FileChunkEntity)
 
@@ -177,6 +186,19 @@ interface ChunkDao {
         chunkIndex: Int,
         newFileId: String,
         botId: String,
+    )
+
+    @Query(
+        """
+        UPDATE file_chunks
+        SET rawSize = :sizeBytes, storedSize = :sizeBytes
+        WHERE driveFileId = :driveFileId AND chunkIndex = :chunkIndex
+        """
+    )
+    suspend fun updateChunkSize(
+        driveFileId: String,
+        chunkIndex: Int,
+        sizeBytes: Long,
     )
 
     @Query("DELETE FROM file_chunks WHERE driveFileId = :driveFileId")

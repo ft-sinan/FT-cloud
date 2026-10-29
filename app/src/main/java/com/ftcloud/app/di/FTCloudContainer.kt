@@ -11,6 +11,7 @@ import com.ftcloud.app.core.database.FTCloudDatabase
 import com.ftcloud.app.core.media.ChunkDiskCache
 import com.ftcloud.app.core.media.ResolvedStreamTarget
 import com.ftcloud.app.core.media.TelegramStreamProxy
+import com.ftcloud.app.core.sync.ChannelMediaImporter
 import com.ftcloud.app.core.sync.CloudManifestSync
 import com.ftcloud.app.core.telegram.MultiBotSwarmManager
 import com.ftcloud.app.core.telegram.TelegramBotApiClient
@@ -82,7 +83,13 @@ class FTCloudContainer(context: Context) {
             credentialStore = credentialStore,
             onChunkBotRebound = { fileId, chunkIndex, newFileId, newBotId ->
                 database.chunkDao().updateChunkBotFileId(fileId, chunkIndex, newFileId, newBotId)
-            }
+            },
+            onChunkSizeResolved = { fileId, chunkIndex, resolvedPlainBytes, chunkCount ->
+                database.chunkDao().updateChunkSize(fileId, chunkIndex, resolvedPlainBytes)
+                if (chunkCount == 1) {
+                    database.fileDao().updateFileSize(fileId, resolvedPlainBytes, System.currentTimeMillis())
+                }
+            },
         )
     }
 
@@ -135,6 +142,17 @@ class FTCloudContainer(context: Context) {
         )
     }
 
+    val channelMediaImporter: ChannelMediaImporter by lazy {
+        ChannelMediaImporter(
+            database = database,
+            apiClient = telegramApiClient,
+            swarmManager = swarmManager,
+            credentialStore = credentialStore,
+            settingsRepository = settingsRepository,
+            manifestSync = manifestSync,
+        )
+    }
+
     val driveRepository: DriveRepository by lazy {
         DriveRepository(
             appContext = appContext,
@@ -163,6 +181,10 @@ class FTCloudContainer(context: Context) {
     }
 
     init {
+        containerScope.launch {
+            runCatching { channelMediaImporter.hydrateSavedScratchChats() }
+            runCatching { channelMediaImporter.syncPendingBotUpdates() }
+        }
         containerScope.launch {
             settingsRepository.settingsFlow.collectLatest { settings ->
                 chunkDiskCache.maxCacheBytes = settings.streamCacheLimitMb.toLong() * 1024L * 1024L

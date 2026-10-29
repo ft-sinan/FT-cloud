@@ -62,6 +62,22 @@ app/src/main/java/com/ftcloud/app/
 
 ---
 
+## 📥 Importing Pre-Existing Channel Media (7,000+ Items)
+
+Already used your private Telegram channel with another cloud app or uploaded thousands of photos/videos directly in Telegram? Open **Settings → Import Pre-Existing Channel Media**:
+
+1. **Instant `result.json` Import (~2 seconds for 7,000+ items, zero rate limits):**
+   - In **Telegram Desktop**, open your channel → `⋮` → **Export chat history** → select **Machine-readable JSON**, and **uncheck** all media download boxes (exports only metadata in ~3 seconds).
+   - Pick `result.json` in FT-Cloud. All 7,000+ photos, videos, audio tracks, and documents appear immediately in **`Imported from Channel`** and your **Gallery** timeline; bot `file_id`s resolve lazily on demand when opened.
+2. **Batch Forward & Live Channel Sync (`getUpdates`):**
+   - New posts made directly in your channel sync automatically. On mobile without a PC, you can also forward up to 100 messages at a time to any bot in your swarm and tap **Sync Forwarded Batches**.
+3. **Background Bot Swarm History Scanner (No PC Needed):**
+   - Scans your channel **newest-first** in the background via `WorkManager` (pause/resume anytime). Tip: send `/start` to your bots in Telegram first to enable **Turbo DM Scanning**, avoiding Telegram's 20 msg/min channel forward limit.
+4. **Legacy `> 20 MB` Single-Post Videos:**
+   - Photos, audio, documents, and videos `<= 20 MB` (plus larger videos where Telegram generated an `<= 20 MB` rendition) stream inline inside FT-Cloud. Any older un-chunked post `> 20 MB` includes a one-tap **Open & Play in Telegram** (`t.me/c/...`) deep link.
+
+---
+
 ## 🛠️ Building & Testing
 
 ### Prerequisites

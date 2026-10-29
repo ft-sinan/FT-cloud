@@ -23,6 +23,7 @@ class ChunkDiskCache(
     private val cipher: AesGcmChunkCipher,
     private val credentialStore: CredentialStore,
     private val onChunkBotRebound: (suspend (driveFileId: String, chunkIndex: Int, newFileId: String, newBotId: String) -> Unit)? = null,
+    private val onChunkSizeResolved: (suspend (driveFileId: String, chunkIndex: Int, resolvedPlainBytes: Long, chunkCount: Int) -> Unit)? = null,
 ) {
     private val inFlightLocks = ConcurrentHashMap<String, Mutex>()
     private val evictionMutex = Mutex()
@@ -46,14 +47,22 @@ class ChunkDiskCache(
         val key = "${driveFile.id}_${chunk.chunkIndex}"
         val targetFile = File(cacheRootDir, "$key.chunk")
 
-        if (targetFile.exists() && targetFile.length() == chunk.rawSize) {
+        if (targetFile.exists() && (
+                (chunk.rawSize > 0L && targetFile.length() == chunk.rawSize) ||
+                    (chunk.rawSize <= 0L && targetFile.length() > 0L)
+                )
+        ) {
             targetFile.setLastModified(System.currentTimeMillis())
             return@withContext targetFile
         }
 
         val lock = inFlightLocks.computeIfAbsent(key) { Mutex() }
         lock.withLock {
-            if (targetFile.exists() && targetFile.length() == chunk.rawSize) {
+            if (targetFile.exists() && (
+                    (chunk.rawSize > 0L && targetFile.length() == chunk.rawSize) ||
+                        (chunk.rawSize <= 0L && targetFile.length() > 0L)
+                    )
+            ) {
                 targetFile.setLastModified(System.currentTimeMillis())
                 return@withLock targetFile
             }
@@ -98,6 +107,11 @@ class ChunkDiskCache(
             if (!tempFile.renameTo(targetFile)) {
                 tempFile.copyTo(targetFile, overwrite = true)
                 tempFile.delete()
+            }
+
+            val actualLen = plainBytes.size.toLong()
+            if (actualLen > 0L && (chunk.rawSize <= 0L || (driveFile.chunkCount == 1 && chunk.rawSize != actualLen))) {
+                onChunkSizeResolved?.invoke(driveFile.id, chunk.chunkIndex, actualLen, driveFile.chunkCount)
             }
 
             enforceQuotaIfNeeded()

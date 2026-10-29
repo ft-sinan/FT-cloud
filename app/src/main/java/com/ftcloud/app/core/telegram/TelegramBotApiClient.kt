@@ -197,6 +197,61 @@ class TelegramBotApiClient(
         executeAndDecode<Boolean>(request)
     }
 
+    suspend fun deleteMessages(
+        token: String,
+        chatId: String,
+        messageIds: List<Long>,
+    ): Boolean = withContext(Dispatchers.IO) {
+        if (messageIds.isEmpty()) return@withContext true
+        val idsJson = messageIds.take(100).joinToString(prefix = "[", postfix = "]")
+        val form = FormBody.Builder()
+            .add("chat_id", chatId)
+            .add("message_ids", idsJson)
+            .build()
+        val request = Request.Builder()
+            .url("$trimmedBase/bot$token/deleteMessages")
+            .post(form)
+            .build()
+        executeAndDecode<Boolean>(request)
+    }
+
+    suspend fun sendTextMessage(
+        token: String,
+        chatId: String,
+        text: String,
+        disableNotification: Boolean = true,
+    ): TgMessage = withContext(Dispatchers.IO) {
+        val form = FormBody.Builder()
+            .add("chat_id", chatId)
+            .add("text", text)
+            .add("disable_notification", disableNotification.toString())
+            .build()
+        val request = Request.Builder()
+            .url("$trimmedBase/bot$token/sendMessage")
+            .post(form)
+            .build()
+        executeAndDecode<TgMessage>(request)
+    }
+
+    suspend fun getUpdates(
+        token: String,
+        offset: Long? = null,
+        limit: Int = 100,
+    ): List<TgUpdate> = withContext(Dispatchers.IO) {
+        val formBuilder = FormBody.Builder()
+            .add("limit", limit.coerceIn(1, 100).toString())
+            .add("timeout", "0")
+            .add("allowed_updates", """["message","channel_post","edited_channel_post"]""")
+        if (offset != null) {
+            formBuilder.add("offset", offset.toString())
+        }
+        val request = Request.Builder()
+            .url("$trimmedBase/bot$token/getUpdates")
+            .post(formBuilder.build())
+            .build()
+        executeAndDecode<List<TgUpdate>>(request)
+    }
+
     private inline fun <reified T> executeAndDecode(request: Request): T {
         httpClient.newCall(request).execute().use { response ->
             val rawBody = response.body?.string().orEmpty()

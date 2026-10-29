@@ -47,6 +47,7 @@ class MultiBotSwarmManager(
     }
 
     private val metricsByBotId = ConcurrentHashMap<String, MutableBotMetrics>()
+    private val scratchChatIdByBotId = ConcurrentHashMap<String, String>()
     private val roundRobinCursor = AtomicInteger(0)
     private val selectionMutex = Mutex()
 
@@ -286,52 +287,162 @@ class MultiBotSwarmManager(
         require(bots.isNotEmpty()) { "No bots configured in FT-Cloud swarm." }
         val channelId = credentialStore.getChannelId()
 
-        val preferredBot = bots.firstOrNull { it.botId == chunk.uploaderBotId }
+        val preferredBot = if (chunk.telegramFileId.isNotBlank()) {
+            bots.firstOrNull { it.botId == chunk.uploaderBotId }
+        } else {
+            null
+        }
         if (preferredBot != null) {
-            val result = runCatching {
-                downloadWithSpecificBot(
+            try {
+                return downloadWithSpecificBot(
                     bot = preferredBot,
                     telegramFileId = chunk.telegramFileId,
                     rangeStart = rangeStart,
                     rangeEndInclusive = rangeEndInclusive,
                     onProgress = onProgress,
                 )
-            }
-            if (result.isSuccess) {
-                return result.getOrThrow()
+            } catch (apiErr: TelegramApiException) {
+                if (apiErr.isFileTooBigForBotApi) {
+                    throw TelegramBotSizeLimitException(
+                        telegramMessageId = chunk.telegramMessageId,
+                        reportedSizeBytes = chunk.rawSize,
+                    )
+                }
+            } catch (_: Exception) {
+                // Fall through to cross-bot message recovery
             }
         }
 
-        // Cross-bot failover: mint a bot-scoped file_id for chunk.telegramMessageId on any healthy bot
+        // Cross-bot failover & lazy message resolution: mint a bot-scoped file_id for chunk.telegramMessageId
         require(channelId.isNotBlank() && chunk.telegramMessageId > 0L) {
             "Original uploader bot (${chunk.uploaderBotId}) unavailable and message ID missing for recovery."
         }
-        val fallbackBot = acquireBestBot()
-        val forwarded = apiClient.forwardMessage(
-            token = fallbackBot.token,
+        val (fallbackBot, forwarded) = inspectChannelMessage(chunk.telegramMessageId)
+            ?: throw IOException("Telegram channel message #${chunk.telegramMessageId} was deleted or has no forwardable media")
+
+        val extracted = forwarded.extractBestMedia(chunk.telegramMessageId)
+            ?: throw IOException("Telegram channel message #${chunk.telegramMessageId} contained no media attachment")
+
+        if (extracted.exceedsBotDownloadLimit) {
+            throw TelegramBotSizeLimitException(
+                telegramMessageId = chunk.telegramMessageId,
+                reportedSizeBytes = extracted.sizeBytes,
+            )
+        }
+
+        val newFileId = extracted.fileId
+        onReboundBotFileId?.invoke(newFileId, fallbackBot.botId)
+        try {
+            return downloadWithSpecificBot(
+                bot = fallbackBot,
+                telegramFileId = newFileId,
+                rangeStart = rangeStart,
+                rangeEndInclusive = rangeEndInclusive,
+                onProgress = onProgress,
+            )
+        } catch (apiErr: TelegramApiException) {
+            if (apiErr.isFileTooBigForBotApi) {
+                throw TelegramBotSizeLimitException(
+                    telegramMessageId = chunk.telegramMessageId,
+                    reportedSizeBytes = extracted.sizeBytes.coerceAtLeast(chunk.rawSize),
+                )
+            }
+            throw apiErr
+        }
+    }
+
+    fun registerBotScratchChat(botId: String, chatId: String) {
+        if (botId.isNotBlank() && chatId.isNotBlank()) {
+            scratchChatIdByBotId[botId] = chatId
+        }
+    }
+
+    fun getBotScratchChatsSnapshot(): Map<String, String> = scratchChatIdByBotId.toMap()
+
+    suspend fun probeLatestChannelMessageId(): Long {
+        val channelId = credentialStore.getChannelId()
+        require(channelId.isNotBlank()) { "Channel ID is not configured." }
+        val bot = acquireBestBot()
+        rateLimiter.acquireSendSlot(bot.botId)
+        val probe = apiClient.sendTextMessage(
+            token = bot.token,
             chatId = channelId,
-            fromChatId = channelId,
-            messageId = chunk.telegramMessageId,
+            text = "🔄 FT-Cloud index probe",
             disableNotification = true,
         )
         runCatching {
-            apiClient.deleteMessage(
-                token = fallbackBot.token,
-                chatId = channelId,
-                messageId = forwarded.messageId,
-            )
+            apiClient.deleteMessage(bot.token, channelId, probe.messageId)
         }
-        val newFileId = forwarded.document?.fileId
-            ?: throw IOException("Forwarded recovery message ${chunk.telegramMessageId} contained no document")
+        return (probe.messageId - 1L).coerceAtLeast(0L)
+    }
 
-        onReboundBotFileId?.invoke(newFileId, fallbackBot.botId)
-        return downloadWithSpecificBot(
-            bot = fallbackBot,
-            telegramFileId = newFileId,
-            rangeStart = rangeStart,
-            rangeEndInclusive = rangeEndInclusive,
-            onProgress = onProgress,
-        )
+    /**
+     * Inspects a historical message in the configured channel via silent forward + immediate cleanup.
+     * Returns null when the message ID was deleted, is a service message, or cannot be forwarded.
+     */
+    suspend fun inspectChannelMessage(
+        messageId: Long,
+        maxAttempts: Int = 4,
+    ): Pair<StoredBotToken, TgMessage>? {
+        val channelId = credentialStore.getChannelId()
+        require(channelId.isNotBlank()) { "Channel ID is not configured." }
+
+        var lastError: Throwable? = null
+        repeat(maxAttempts) { attempt ->
+            val bot = acquireBestBot()
+            val metrics = metricsByBotId.computeIfAbsent(bot.botId) { MutableBotMetrics() }
+            val targetScratchChat = scratchChatIdByBotId[bot.botId] ?: channelId
+            metrics.activeRequests.incrementAndGet()
+            refreshStatusSnapshot()
+            try {
+                rateLimiter.acquireSendSlot(bot.botId)
+                val forwarded = apiClient.forwardMessage(
+                    token = bot.token,
+                    chatId = targetScratchChat,
+                    fromChatId = channelId,
+                    messageId = messageId,
+                    disableNotification = true,
+                )
+                runCatching {
+                    apiClient.deleteMessage(bot.token, targetScratchChat, forwarded.messageId)
+                }
+                metrics.isHealthy = true
+                metrics.lastError = null
+                return bot to forwarded
+            } catch (apiErr: TelegramApiException) {
+                lastError = apiErr
+                val desc = apiErr.apiDescription.lowercase()
+                if (apiErr.isFloodWait) {
+                    val waitSec = (apiErr.retryAfterSeconds ?: 5).coerceIn(1, 180)
+                    metrics.cooldownUntilMs.set(System.currentTimeMillis() + waitSec * 1000L)
+                    metrics.lastError = "Rate limited (${waitSec}s cooldown)"
+                } else if (
+                    apiErr.errorCode == 400 && (
+                        desc.contains("not found") ||
+                            desc.contains("can't be forwarded") ||
+                            desc.contains("message_id_invalid") ||
+                            desc.contains("empty")
+                        )
+                ) {
+                    // Deleted post, service post, or non-existent message gap -> skip immediately
+                    return null
+                } else if (targetScratchChat != channelId && apiErr.errorCode in setOf(400, 403)) {
+                    // User blocked bot DM -> drop scratch chat and retry via channel
+                    scratchChatIdByBotId.remove(bot.botId)
+                } else if (attempt < maxAttempts - 1) {
+                    delay(350L * (attempt + 1))
+                }
+            } catch (ioErr: IOException) {
+                lastError = ioErr
+                if (attempt < maxAttempts - 1) {
+                    delay(400L * (attempt + 1))
+                }
+            } finally {
+                metrics.activeRequests.decrementAndGet()
+                refreshStatusSnapshot()
+            }
+        }
+        throw lastError ?: IOException("Unable to inspect message #$messageId")
     }
 
     suspend fun fetchChatWithPinnedMessage(): TgChat {

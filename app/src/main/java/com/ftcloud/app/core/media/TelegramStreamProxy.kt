@@ -142,9 +142,24 @@ class TelegramStreamProxy(
                 }
 
                 val driveFile = resolved.file
-                val sortedChunks = resolved.chunks.sortedBy { it.chunkIndex }
-                val totalSize = driveFile.sizeBytes.coerceAtLeast(sortedChunks.sumOf { it.rawSize })
+                var sortedChunks = resolved.chunks.sortedBy { it.chunkIndex }
+                var totalSize = driveFile.sizeBytes.coerceAtLeast(sortedChunks.sumOf { it.rawSize })
                 val contentType = driveFile.mimeType.ifBlank { "application/octet-stream" }
+
+                if (
+                    totalSize == 0L &&
+                    sortedChunks.size == 1 &&
+                    (sortedChunks[0].telegramMessageId > 0L || sortedChunks[0].telegramFileId.isNotBlank())
+                ) {
+                    val eagerFile = runCatching {
+                        runBlocking { chunkFileProvider.provideChunkFile(driveFile, sortedChunks[0], null) }
+                    }.getOrNull()
+                    if (eagerFile != null && eagerFile.length() > 0L) {
+                        val realLen = eagerFile.length()
+                        totalSize = realLen
+                        sortedChunks = listOf(sortedChunks[0].copy(rawSize = realLen, storedSize = realLen))
+                    }
+                }
 
                 if (totalSize == 0L) {
                     writeHeaders(

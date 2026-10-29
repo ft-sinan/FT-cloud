@@ -550,6 +550,10 @@ class DriveRepository(
 
     fun getCurrentCacheBytes(): Long = chunkDiskCache.currentCacheBytes()
 
+    suspend fun getPrimaryTelegramMessageId(driveFileId: String): Long? = withContext(Dispatchers.IO) {
+        chunkDao.getPrimaryMessageIdForFile(driveFileId)?.takeIf { it > 0L }
+    }
+
     private fun resolveDisplayNameAndSize(uri: Uri): Pair<String, Long> {
         if (uri.scheme == "file") {
             val f = File(uri.path.orEmpty())

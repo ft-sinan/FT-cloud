@@ -252,6 +252,13 @@ data class AppSettings(
     val lastManifestSyncAt: Long? = null,
     val lastBackupRunAt: Long? = null,
     val lastBackupSummary: String? = null,
+    val channelScanRunning: Boolean = false,
+    val channelScanCursorId: Long = 0L,
+    val channelScanMaxId: Long = 0L,
+    val channelScanCheckedCount: Int = 0,
+    val channelScanImportedCount: Int = 0,
+    val channelScanStatus: String? = null,
+    val turboDmBotCount: Int = 0,
 )
 
 data class DriveStats(
@@ -313,5 +320,26 @@ object FormatUtils {
         val botId = token.substring(0, colonIdx)
         val suffix = token.takeLast(4)
         return "$botId:••••••$suffix"
+    }
+
+    fun buildTelegramMessageUrl(channelId: String, messageId: Long): String? {
+        if (messageId <= 0L || channelId.isBlank()) return null
+        val trimmed = channelId.trim()
+        return when {
+            trimmed.startsWith("@") -> "https://t.me/${trimmed.removePrefix("@")}/$messageId"
+            trimmed.startsWith("-100") -> "https://t.me/c/${trimmed.removePrefix("-100")}/$messageId"
+            trimmed.all { it.isDigit() } -> "https://t.me/c/${trimmed.removePrefix("100")}/$messageId"
+            else -> null
+        }
+    }
+
+    fun buildTelegramAppDeepLink(channelId: String, messageId: Long): String? {
+        if (messageId <= 0L || channelId.isBlank()) return null
+        val trimmed = channelId.trim()
+        return when {
+            trimmed.startsWith("@") -> "tg://resolve?domain=${trimmed.removePrefix("@")}&post=$messageId"
+            trimmed.startsWith("-100") -> "tg://privatepost?channel=${trimmed.removePrefix("-100")}&post=$messageId"
+            else -> null
+        }
     }
 }

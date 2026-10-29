@@ -44,6 +44,11 @@ class SettingsRepository(
             runCatching { json.decodeFromString<List<BackupFolderConfig>>(foldersRaw) }.getOrDefault(emptyList())
         }
 
+        val scratchMap = prefs[KEY_BOT_SCRATCH_CHATS_JSON]
+            ?.let { runCatching { json.decodeFromString<Map<String, String>>(it) }.getOrNull() }
+            .orEmpty()
+        val activeBotIds = bots.map { it.botId }.toSet()
+
         AppSettings(
             isConfigured = channelId.isNotBlank() && bots.isNotEmpty(),
             channelId = channelId,
@@ -77,6 +82,13 @@ class SettingsRepository(
             lastManifestSyncAt = prefs[KEY_LAST_MANIFEST_SYNC_AT],
             lastBackupRunAt = prefs[KEY_LAST_BACKUP_RUN_AT],
             lastBackupSummary = prefs[KEY_LAST_BACKUP_SUMMARY],
+            channelScanRunning = prefs[KEY_CHANNEL_SCAN_RUNNING] ?: false,
+            channelScanCursorId = prefs[KEY_CHANNEL_SCAN_CURSOR_ID] ?: 0L,
+            channelScanMaxId = prefs[KEY_CHANNEL_SCAN_MAX_ID] ?: 0L,
+            channelScanCheckedCount = prefs[KEY_CHANNEL_SCAN_CHECKED] ?: 0,
+            channelScanImportedCount = prefs[KEY_CHANNEL_SCAN_IMPORTED] ?: 0,
+            channelScanStatus = prefs[KEY_CHANNEL_SCAN_STATUS],
+            turboDmBotCount = scratchMap.keys.count { it in activeBotIds },
         )
     }
 
@@ -175,11 +187,75 @@ class SettingsRepository(
         }
     }
 
+    suspend fun updateChannelScanState(
+        running: Boolean? = null,
+        cursorId: Long? = null,
+        maxId: Long? = null,
+        checkedCount: Int? = null,
+        importedCount: Int? = null,
+        status: String? = null,
+    ) {
+        dataStore.edit { prefs ->
+            if (running != null) prefs[KEY_CHANNEL_SCAN_RUNNING] = running
+            if (cursorId != null) prefs[KEY_CHANNEL_SCAN_CURSOR_ID] = cursorId
+            if (maxId != null) prefs[KEY_CHANNEL_SCAN_MAX_ID] = maxId
+            if (checkedCount != null) prefs[KEY_CHANNEL_SCAN_CHECKED] = checkedCount
+            if (importedCount != null) prefs[KEY_CHANNEL_SCAN_IMPORTED] = importedCount
+            if (status != null) prefs[KEY_CHANNEL_SCAN_STATUS] = status
+        }
+    }
+
+    suspend fun resetChannelScanProgress() {
+        dataStore.edit { prefs ->
+            prefs[KEY_CHANNEL_SCAN_RUNNING] = false
+            prefs[KEY_CHANNEL_SCAN_CURSOR_ID] = 0L
+            prefs[KEY_CHANNEL_SCAN_MAX_ID] = 0L
+            prefs[KEY_CHANNEL_SCAN_CHECKED] = 0
+            prefs[KEY_CHANNEL_SCAN_IMPORTED] = 0
+            prefs.remove(KEY_CHANNEL_SCAN_STATUS)
+        }
+    }
+
+    suspend fun getBotUpdateOffsets(): Map<String, Long> {
+        val raw = dataStore.data.first()[KEY_BOT_UPDATE_OFFSETS_JSON] ?: return emptyMap()
+        return runCatching { json.decodeFromString<Map<String, Long>>(raw) }.getOrDefault(emptyMap())
+    }
+
+    suspend fun saveBotUpdateOffset(botId: String, nextOffset: Long) {
+        dataStore.edit { prefs ->
+            val current = prefs[KEY_BOT_UPDATE_OFFSETS_JSON]
+                ?.let { runCatching { json.decodeFromString<Map<String, Long>>(it) }.getOrNull() }
+                .orEmpty()
+                .toMutableMap()
+            current[botId] = nextOffset
+            prefs[KEY_BOT_UPDATE_OFFSETS_JSON] = json.encodeToString(current)
+        }
+    }
+
+    suspend fun getBotScratchChats(): Map<String, String> {
+        val raw = dataStore.data.first()[KEY_BOT_SCRATCH_CHATS_JSON] ?: return emptyMap()
+        return runCatching { json.decodeFromString<Map<String, String>>(raw) }.getOrDefault(emptyMap())
+    }
+
+    suspend fun saveBotScratchChat(botId: String, chatId: String) {
+        dataStore.edit { prefs ->
+            val current = prefs[KEY_BOT_SCRATCH_CHATS_JSON]
+                ?.let { runCatching { json.decodeFromString<Map<String, String>>(it) }.getOrNull() }
+                .orEmpty()
+                .toMutableMap()
+            current[botId] = chatId
+            prefs[KEY_BOT_SCRATCH_CHATS_JSON] = json.encodeToString(current)
+        }
+    }
+
     suspend fun disconnectAccount() {
         credentialStore.clearAll()
         dataStore.edit {
             it.remove(KEY_PINNED_MANIFEST_MSG_ID)
             it.remove(KEY_LAST_MANIFEST_SYNC_AT)
+            it.remove(KEY_BOT_UPDATE_OFFSETS_JSON)
+            it.remove(KEY_BOT_SCRATCH_CHATS_JSON)
+            it[KEY_CHANNEL_SCAN_RUNNING] = false
             it[KEY_AUTO_BACKUP_ENABLED] = false
             it[KEY_ENCRYPTION_ENABLED] = false
         }
@@ -206,5 +282,13 @@ class SettingsRepository(
         private val KEY_LAST_MANIFEST_SYNC_AT = longPreferencesKey("last_manifest_sync_at")
         private val KEY_LAST_BACKUP_RUN_AT = longPreferencesKey("last_backup_run_at")
         private val KEY_LAST_BACKUP_SUMMARY = stringPreferencesKey("last_backup_summary")
+        private val KEY_CHANNEL_SCAN_RUNNING = booleanPreferencesKey("channel_scan_running")
+        private val KEY_CHANNEL_SCAN_CURSOR_ID = longPreferencesKey("channel_scan_cursor_id")
+        private val KEY_CHANNEL_SCAN_MAX_ID = longPreferencesKey("channel_scan_max_id")
+        private val KEY_CHANNEL_SCAN_CHECKED = intPreferencesKey("channel_scan_checked")
+        private val KEY_CHANNEL_SCAN_IMPORTED = intPreferencesKey("channel_scan_imported")
+        private val KEY_CHANNEL_SCAN_STATUS = stringPreferencesKey("channel_scan_status")
+        private val KEY_BOT_UPDATE_OFFSETS_JSON = stringPreferencesKey("bot_update_offsets_json")
+        private val KEY_BOT_SCRATCH_CHATS_JSON = stringPreferencesKey("bot_scratch_chats_json")
     }
 }
