@@ -35,6 +35,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Cloud
+import androidx.compose.material.icons.outlined.CloudUpload
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -167,66 +168,40 @@ fun CloudMark(
     }
 }
 
-/** FT Franchise Shield + Lime Orbit brand tile matching FT Vault's launcher emblem. */
+/** Classic FT Cloud emblem (#0A2540 navy + #133B6E wave + crisp CloudUpload mark). */
 @Composable
 fun FTCloudShieldMark(
     modifier: Modifier = Modifier,
     size: Dp = 64.dp,
-    containerColor: Color = Color(0xFF173F35),
-    shieldColor: Color = Color(0xFFF2EFE3),
-    accentColor: Color = Color(0xFFC8F169),
+    containerColor: Color = Color(0xFF0A2540),
+    waveColor: Color = Color(0xFF133B6E),
+    iconTint: Color = Color.White,
 ) {
     Box(
         modifier = modifier
             .size(size)
-            .clip(RoundedCornerShape(size * 0.30f))
+            .clip(RoundedCornerShape(size * 0.28f))
             .background(containerColor),
         contentAlignment = Alignment.Center,
     ) {
         Canvas(modifier = Modifier.size(size)) {
-            val sx = this.size.width / 108f
-            val sy = this.size.height / 108f
-            fun point(x: Float, y: Float) = Offset(x * sx, y * sy)
-
-            drawCircle(
-                color = accentColor.copy(alpha = 0.14f),
-                radius = 26f * sx,
-                center = point(88f, 15f),
-            )
-
-            val shield = Path().apply {
-                var pt = point(54f, 22.2f); moveTo(pt.x, pt.y)
-                pt = point(78.5f, 29.1f); lineTo(pt.x, pt.y)
-                pt = point(78.5f, 48.8f); lineTo(pt.x, pt.y)
-                var c1 = point(78.5f, 64.3f); var c2 = point(68.7f, 75.5f); var e = point(54f, 83.2f)
-                cubicTo(c1.x, c1.y, c2.x, c2.y, e.x, e.y)
-                c1 = point(39.3f, 75.5f); c2 = point(29.5f, 64.3f); e = point(29.5f, 48.8f)
-                cubicTo(c1.x, c1.y, c2.x, c2.y, e.x, e.y)
-                pt = point(29.5f, 29.1f); lineTo(pt.x, pt.y)
+            val w = this.size.width
+            val h = this.size.height
+            val wave = Path().apply {
+                moveTo(0f, h * 0.67f)
+                quadraticTo(w * 0.50f, h * 0.41f, w, h * 0.72f)
+                lineTo(w, h)
+                lineTo(0f, h)
                 close()
             }
-            drawPath(shield, shieldColor)
-
-            val inner = Path().apply {
-                var pt = point(54f, 29.9f); moveTo(pt.x, pt.y)
-                pt = point(70.7f, 35.1f); lineTo(pt.x, pt.y)
-                pt = point(70.7f, 48.8f); lineTo(pt.x, pt.y)
-                var c1 = point(70.7f, 60f); var c2 = point(63.8f, 68.6f); var e = point(54f, 73.8f)
-                cubicTo(c1.x, c1.y, c2.x, c2.y, e.x, e.y)
-                c1 = point(44.2f, 68.6f); c2 = point(37.3f, 60f); e = point(37.3f, 48.8f)
-                cubicTo(c1.x, c1.y, c2.x, c2.y, e.x, e.y)
-                pt = point(37.3f, 35.1f); lineTo(pt.x, pt.y)
-                close()
-            }
-            drawPath(
-                path = inner,
-                color = containerColor,
-                style = Stroke(width = 3.6f * sx, join = StrokeJoin.Round),
-            )
-
-            drawCircle(accentColor, radius = 11.8f * sx, center = point(54f, 54f))
-            drawCircle(containerColor, radius = 4.2f * sx, center = point(54f, 54f))
+            drawPath(wave, waveColor)
         }
+        Icon(
+            imageVector = Icons.Outlined.CloudUpload,
+            contentDescription = null,
+            tint = iconTint,
+            modifier = Modifier.size(size * 0.56f),
+        )
     }
 }
 

@@ -655,7 +655,12 @@ class ChannelMediaImporter(
     private suspend fun syncManifestQuietly() {
         runCatching {
             val prevMsgId = settingsRepository.getSnapshot().pinnedManifestMessageId
-            val newMsgId = manifestSync.pushAndPinManifest(previousManifestMessageId = prevMsgId)
+            val (deletedFiles, deletedFolders) = settingsRepository.getDeletedTombstones()
+            val newMsgId = manifestSync.pushAndPinManifest(
+                previousManifestMessageId = prevMsgId,
+                deletedFileIds = deletedFiles,
+                deletedFolderIds = deletedFolders,
+            )
             settingsRepository.recordManifestSync(newMsgId)
         }
     }

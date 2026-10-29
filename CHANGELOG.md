@@ -2,6 +2,20 @@
 
 All notable changes to **FT Cloud** are documented in this file.
 
+## [1.2.0] - 2026-10-29
+
+### Added
+- **Multi-Phone Cloud Sync (`CloudManifestSync` v2)**:
+  - Use the same FT Cloud channel seamlessly across multiple phones and tablets without overwriting changes made on another device.
+  - Automatic foreground delta-check & CRDT merge (`updatedAt` conflict resolution + deletion tombstones) plus a one-tap **Sync Across Devices** action in the Drive top bar and Settings.
+  - **Zero Re-Scanning on New Phones / Reinstalls**: All imported channel media (`Imported from Channel`), folders, and stars are stored in your channel's **Pinned Cloud Manifest** and restored **automatically in ~1 second** during login — you never have to re-run the Background Bot Swarm History Scanner again.
+- **Instant Second-Phone Login (QR Code & Encrypted 6-Digit PIN Pairing Key)**:
+  - On Phone 1, open **Settings → Multi-Device & Second-Phone Login → Link a Second Phone** to display a scannable **QR Code** or copy/share an **AES-256-GCM encrypted Pairing Key (`FTCLOUD1:...`)** protected by a 6-digit PIN (safe to send via Telegram Saved Messages without exposing plaintext bot tokens).
+  - On Phone 2's Onboarding screen, tap **Scan QR**, **Import QR Screenshot**, or **Pairing Key** to transfer your Channel ID, entire Bot Swarm, Turbo DM chat IDs, and Vault key in seconds.
+
+### Changed
+- **Restored Classic FT Cloud Launcher Icon & Emblem**: Brought back the original `#0A2540` navy + `#133B6E` wave + white cloud & `#0B6EFD` upload arrow adaptive icon while keeping the full Orion Material 3 Expressive UI theme.
+
 ## [1.1.0] - 2026-10-29
 
 ### Added

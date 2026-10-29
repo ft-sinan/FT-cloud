@@ -183,6 +183,11 @@ class FTCloudContainer(context: Context) {
     init {
         containerScope.launch {
             runCatching { channelMediaImporter.hydrateSavedScratchChats() }
+            runCatching {
+                if (settingsRepository.getSnapshot().multiDeviceAutoSync) {
+                    driveRepository.syncMultiDeviceCloud(forcePull = false)
+                }
+            }
             runCatching { channelMediaImporter.syncPendingBotUpdates() }
         }
         containerScope.launch {

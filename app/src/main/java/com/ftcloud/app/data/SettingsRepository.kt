@@ -87,6 +87,7 @@ class SettingsRepository(
             biometricLockEnabled = prefs[KEY_BIOMETRIC_LOCK] ?: false,
             blockScreenshots = prefs[KEY_BLOCK_SCREENSHOTS] ?: false,
             encryptionEnabled = prefs[KEY_ENCRYPTION_ENABLED] ?: false,
+            multiDeviceAutoSync = prefs[KEY_MULTI_DEVICE_AUTO_SYNC] ?: true,
             pinnedManifestMessageId = prefs[KEY_PINNED_MANIFEST_MSG_ID],
             lastManifestSyncAt = prefs[KEY_LAST_MANIFEST_SYNC_AT],
             lastBackupRunAt = prefs[KEY_LAST_BACKUP_RUN_AT],
@@ -209,6 +210,58 @@ class SettingsRepository(
         dataStore.edit { it[KEY_ENCRYPTION_ENABLED] = enabled }
     }
 
+    suspend fun setMultiDeviceAutoSync(enabled: Boolean) {
+        dataStore.edit { it[KEY_MULTI_DEVICE_AUTO_SYNC] = enabled }
+    }
+
+    suspend fun getDeletedTombstones(): Pair<Set<String>, Set<String>> {
+        val snap = dataStore.data.first()
+        val files = snap[KEY_DELETED_FILE_IDS_JSON]
+            ?.let { runCatching { json.decodeFromString<List<String>>(it) }.getOrNull() }
+            .orEmpty()
+            .toSet()
+        val folders = snap[KEY_DELETED_FOLDER_IDS_JSON]
+            ?.let { runCatching { json.decodeFromString<List<String>>(it) }.getOrNull() }
+            .orEmpty()
+            .toSet()
+        return files to folders
+    }
+
+    suspend fun recordDeletedTombstones(
+        fileIds: Collection<String> = emptyList(),
+        folderIds: Collection<String> = emptyList(),
+    ) {
+        if (fileIds.isEmpty() && folderIds.isEmpty()) return
+        dataStore.edit { prefs ->
+            if (fileIds.isNotEmpty()) {
+                val cur = prefs[KEY_DELETED_FILE_IDS_JSON]
+                    ?.let { runCatching { json.decodeFromString<List<String>>(it) }.getOrNull() }
+                    .orEmpty()
+                val merged = (cur + fileIds).distinct().takeLast(MAX_TOMBSTONES)
+                prefs[KEY_DELETED_FILE_IDS_JSON] = json.encodeToString(merged)
+            }
+            if (folderIds.isNotEmpty()) {
+                val cur = prefs[KEY_DELETED_FOLDER_IDS_JSON]
+                    ?.let { runCatching { json.decodeFromString<List<String>>(it) }.getOrNull() }
+                    .orEmpty()
+                val merged = (cur + folderIds).distinct().takeLast(MAX_TOMBSTONES)
+                prefs[KEY_DELETED_FOLDER_IDS_JSON] = json.encodeToString(merged)
+            }
+        }
+    }
+
+    suspend fun saveBotScratchChatsAll(chats: Map<String, String>) {
+        if (chats.isEmpty()) return
+        dataStore.edit { prefs ->
+            val current = prefs[KEY_BOT_SCRATCH_CHATS_JSON]
+                ?.let { runCatching { json.decodeFromString<Map<String, String>>(it) }.getOrNull() }
+                .orEmpty()
+                .toMutableMap()
+            current.putAll(chats)
+            prefs[KEY_BOT_SCRATCH_CHATS_JSON] = json.encodeToString(current)
+        }
+    }
+
     suspend fun recordManifestSync(messageId: Long, syncedAtMs: Long = System.currentTimeMillis()) {
         dataStore.edit {
             it[KEY_PINNED_MANIFEST_MSG_ID] = messageId
@@ -291,6 +344,8 @@ class SettingsRepository(
             it.remove(KEY_LAST_MANIFEST_SYNC_AT)
             it.remove(KEY_BOT_UPDATE_OFFSETS_JSON)
             it.remove(KEY_BOT_SCRATCH_CHATS_JSON)
+            it.remove(KEY_DELETED_FILE_IDS_JSON)
+            it.remove(KEY_DELETED_FOLDER_IDS_JSON)
             it[KEY_CHANNEL_SCAN_RUNNING] = false
             it[KEY_AUTO_BACKUP_ENABLED] = false
             it[KEY_ENCRYPTION_ENABLED] = false
@@ -298,6 +353,7 @@ class SettingsRepository(
     }
 
     companion object {
+        private const val MAX_TOMBSTONES = 2000
         private val KEY_THEME_MODE = stringPreferencesKey("theme_mode")
         private val KEY_ACCENT_COLOR = stringPreferencesKey("accent_color")
         private val KEY_DYNAMIC_COLOR = booleanPreferencesKey("dynamic_color")
@@ -320,6 +376,9 @@ class SettingsRepository(
         private val KEY_BIOMETRIC_LOCK = booleanPreferencesKey("biometric_lock")
         private val KEY_BLOCK_SCREENSHOTS = booleanPreferencesKey("block_screenshots")
         private val KEY_ENCRYPTION_ENABLED = booleanPreferencesKey("encryption_enabled")
+        private val KEY_MULTI_DEVICE_AUTO_SYNC = booleanPreferencesKey("multi_device_auto_sync")
+        private val KEY_DELETED_FILE_IDS_JSON = stringPreferencesKey("deleted_file_ids_json")
+        private val KEY_DELETED_FOLDER_IDS_JSON = stringPreferencesKey("deleted_folder_ids_json")
         private val KEY_PINNED_MANIFEST_MSG_ID = longPreferencesKey("pinned_manifest_msg_id")
         private val KEY_LAST_MANIFEST_SYNC_AT = longPreferencesKey("last_manifest_sync_at")
         private val KEY_LAST_BACKUP_RUN_AT = longPreferencesKey("last_backup_run_at")

@@ -48,9 +48,11 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -67,6 +69,9 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavType
@@ -143,6 +148,25 @@ fun FTCloudAppShell(
 
     var startupChecked by rememberSaveable { mutableStateOf(false) }
     var startupUpdateRelease by remember { mutableStateOf<UpdateRelease?>(null) }
+    var lastForegroundSyncMs by rememberSaveable { mutableLongStateOf(0L) }
+    val lifecycleOwner = LocalLifecycleOwner.current
+
+    DisposableEffect(lifecycleOwner, settings.multiDeviceAutoSync, settings.isConfigured) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_START && settings.isConfigured && settings.multiDeviceAutoSync) {
+                val now = System.currentTimeMillis()
+                if (now - lastForegroundSyncMs >= 15_000L) {
+                    lastForegroundSyncMs = now
+                    scope.launch {
+                        runCatching { container.driveRepository.syncMultiDeviceCloud(forcePull = false) }
+                        runCatching { container.channelMediaImporter.syncPendingBotUpdates() }
+                    }
+                }
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     LaunchedEffect(settings.lastUpdateCheckAt) {
         if (!startupChecked && System.currentTimeMillis() - settings.lastUpdateCheckAt >= 86_400_000L) {

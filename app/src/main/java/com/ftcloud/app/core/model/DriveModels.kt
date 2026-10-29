@@ -266,6 +266,7 @@ data class AppSettings(
     val biometricLockEnabled: Boolean = false,
     val blockScreenshots: Boolean = false,
     val encryptionEnabled: Boolean = false,
+    val multiDeviceAutoSync: Boolean = true,
     val pinnedManifestMessageId: Long? = null,
     val lastManifestSyncAt: Long? = null,
     val lastBackupRunAt: Long? = null,

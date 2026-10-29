@@ -8,6 +8,9 @@ Zero third-party servers. Zero storage quotas. Every file, folder, and pinned in
 
 ## ✨ Key Capabilities
 
+- **📱 Seamless Multi-Phone Sync & Instant Second-Phone Login (`v1.2.0`)**
+  - **Scan QR or Encrypted 6-Digit PIN Pairing**: Open **Settings → Link a Second Phone** on Phone 1 and tap **Scan QR** (or paste the AES-256-GCM encrypted `FTCLOUD1:...` pairing key + 6-digit PIN) on Phone 2 to connect your entire Bot Swarm in seconds.
+  - **Live Cross-Device Merge (Zero Overwrites, Zero Re-Scans)**: Automatic foreground manifest sync with timestamp merge & deletion tombstones keeps folders, uploads, stars, and imported media in sync across all your phones — and fresh installs / second phones restore all 7,000+ imported items automatically in ~1 second without ever running the history scanner again.
 - **🎨 Signature FT / Orion Material 3 Expressive Design System**
   - **Space Grotesk** geometric typography across display, headline, title, and label hierarchies (`10dp`–`36dp` expressive shapes).
   - **9 Curated Brand Palettes**: Default **Orion** (`#4C4ECD` / `#C0C1FF` indigo-violet + `#CCFE82` / `#CAFB80` electric lime accents) plus `Teal`, `Navy`, `Emerald`, `Indigo`, `Ocean`, `Grape`, `Cocoa`, and `Slate`, alongside `System`, `Light`, `Dark`, **OLED Pure Black**, and optional **Material You** wallpaper colors.
@@ -39,7 +42,7 @@ Zero third-party servers. Zero storage quotas. Every file, folder, and pinned in
 
 ## 🚀 Quick Setup (60 Seconds)
 
-1. Download **`FTCloud-v1.1.0.apk`** from [**GitHub Releases**](https://github.com/ft-sinan/FT-cloud/releases/latest) and install it on your Android device.
+1. Download **`FTCloud-v1.2.0.apk`** from [**GitHub Releases**](https://github.com/ft-sinan/FT-cloud/releases/latest) and install it on your Android device (or update directly in-place via **Settings → App Updates**!).
 2. Open **[@BotFather](https://t.me/BotFather)** in Telegram, send `/newbot`, and copy your **Bot Token** (create 2–3 bots if you want parallel Swarm throughput).
 3. Create a **Private Telegram Channel** and add your bot(s) as **Administrators** (with permissions to *Post*, *Edit*, *Delete*, and *Pin* messages).
 4. Find your **Channel ID** (e.g., `-1001234567890` — forward any message from the channel to `@userinfobot` or copy the ID from Telegram Desktop/Web).

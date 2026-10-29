@@ -1,9 +1,10 @@
 package com.ftcloud.app.ui.screens.onboarding
 
+import android.graphics.BitmapFactory
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -17,13 +18,17 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.CameraAlt
 import androidx.compose.material.icons.outlined.CheckCircle
-import androidx.compose.material.icons.outlined.CloudUpload
+import androidx.compose.material.icons.outlined.ContentPaste
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.HelpOutline
+import androidx.compose.material.icons.outlined.Image
+import androidx.compose.material.icons.outlined.PhonelinkSetup
 import androidx.compose.material.icons.outlined.Restore
 import androidx.compose.material.icons.outlined.SmartToy
 import androidx.compose.material3.AlertDialog
@@ -32,6 +37,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -50,33 +56,118 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
-import com.ftcloud.app.core.model.CloudManifestEnvelope
+import com.ftcloud.app.core.pairing.DevicePairingManager
 import com.ftcloud.app.di.FTCloudContainer
 import com.ftcloud.app.ui.components.FTCloudShieldMark
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @Composable
 fun OnboardingScreen(
     container: FTCloudContainer,
     onConnected: () -> Unit,
 ) {
+    val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
     val scope = rememberCoroutineScope()
+
     var channelInput by rememberSaveable { mutableStateOf("") }
     val botTokens = remember { mutableStateListOf("") }
     var showTokenPlaintext by rememberSaveable { mutableStateOf(false) }
-    var showGuide by rememberSaveable { mutableStateOf(true) }
+    var showGuide by rememberSaveable { mutableStateOf(false) }
     var isConnecting by remember { mutableStateOf(false) }
+    var connectingStatus by remember { mutableStateOf("Verifying Bot Swarm & Channel…") }
     var errorMessage by remember { mutableStateOf<String?>(null) }
 
-    var pendingRestorePrompt by remember { mutableStateOf(false) }
+    var showPastePairingDialog by remember { mutableStateOf(false) }
+    var pairingKeyInput by rememberSaveable { mutableStateOf("") }
+    var pairingPinInput by rememberSaveable { mutableStateOf("") }
+    var pairingDialogError by remember { mutableStateOf<String?>(null) }
+
+    var pendingEncryptedRestorePrompt by remember { mutableStateOf(false) }
     var restorePassphrase by rememberSaveable { mutableStateOf("") }
     var isRestoring by remember { mutableStateOf(false) }
     var restoreError by remember { mutableStateOf<String?>(null) }
+
+    suspend fun finishConnectionWithAutoSync() {
+        connectingStatus = "Syncing cloud index & media catalog…"
+        val inspection = runCatching { container.manifestSync.inspectPinnedManifest() }.getOrNull()
+        if (inspection != null) {
+            if (!inspection.encrypted) {
+                runCatching { container.driveRepository.restoreManifestFromChannel() }
+                runCatching { container.channelMediaImporter.syncPendingBotUpdates() }
+                isConnecting = false
+                onConnected()
+            } else {
+                isConnecting = false
+                pendingEncryptedRestorePrompt = true
+            }
+        } else {
+            runCatching { container.channelMediaImporter.syncPendingBotUpdates() }
+            isConnecting = false
+            onConnected()
+        }
+    }
+
+    fun handleQrStringDecoded(qrText: String) {
+        isConnecting = true
+        errorMessage = null
+        connectingStatus = "Linking phone & verifying Bot Swarm…"
+        scope.launch {
+            runCatching {
+                container.driveRepository.connectViaPairingInput(rawInput = qrText)
+            }.onSuccess {
+                finishConnectionWithAutoSync()
+            }.onFailure { err ->
+                isConnecting = false
+                errorMessage = err.message ?: "Failed to pair from QR code."
+            }
+        }
+    }
+
+    val cameraQrLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.TakePicturePreview(),
+    ) { bitmap ->
+        if (bitmap == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            val decoded = withContext(Dispatchers.Default) {
+                DevicePairingManager.decodeQrBitmap(bitmap)
+            }
+            if (decoded != null) {
+                handleQrStringDecoded(decoded)
+            } else {
+                errorMessage = "Could not detect an FT Cloud QR code in that photo. Move closer to Phone 1's screen or use Paste Pairing Key."
+            }
+        }
+    }
+
+    val imageQrLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent(),
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            val decoded = withContext(Dispatchers.IO) {
+                context.contentResolver.openInputStream(uri)?.use { stream ->
+                    BitmapFactory.decodeStream(stream)
+                }?.let { bmp ->
+                    DevicePairingManager.decodeQrBitmap(bmp)
+                }
+            }
+            if (decoded != null) {
+                handleQrStringDecoded(decoded)
+            } else {
+                errorMessage = "No valid FT Cloud QR code found in the selected image."
+            }
+        }
+    }
 
     Surface(
         modifier = Modifier.fillMaxSize(),
@@ -100,12 +191,86 @@ fun OnboardingScreen(
                         style = MaterialTheme.typography.displaySmall,
                     )
                     Text(
-                        text = "Unlimited personal vault drive powered by your Telegram Bot Swarm",
+                        text = "Unlimited personal cloud drive powered by your Telegram Bot Swarm",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             }
+
+            // Instant Second-Phone Login Card
+            Card(
+                shape = RoundedCornerShape(22.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.65f),
+                ),
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Outlined.PhonelinkSetup,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
+                        Spacer(Modifier.width(10.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Logging in on a Second Phone?",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                            Text(
+                                text = "On your first phone, open FT Cloud → Settings → Link a Second Phone. All your folders & imported media restore automatically in ~1 second (no re-scanning!).",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(
+                            enabled = !isConnecting,
+                            onClick = { cameraQrLauncher.launch(null) },
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Icon(Icons.Outlined.CameraAlt, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Scan QR")
+                        }
+                        FilledTonalButton(
+                            enabled = !isConnecting,
+                            onClick = {
+                                val clip = clipboard.getText()?.text.orEmpty()
+                                if (pairingKeyInput.isBlank() && clip.contains("FTCLOUD1:")) {
+                                    pairingKeyInput = clip.trim()
+                                }
+                                pairingDialogError = null
+                                showPastePairingDialog = true
+                            },
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Icon(Icons.Outlined.ContentPaste, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Pairing Key")
+                        }
+                    }
+
+                    OutlinedButton(
+                        enabled = !isConnecting,
+                        onClick = { imageQrLauncher.launch("image/*") },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Icon(Icons.Outlined.Image, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Import QR Screenshot from Gallery")
+                    }
+                }
+            }
+
+            HorizontalDivider()
 
             Card(
                 shape = RoundedCornerShape(18.dp),
@@ -127,12 +292,12 @@ fun OnboardingScreen(
                             )
                             Spacer(Modifier.width(8.dp))
                             Text(
-                                text = "60-Second Setup Guide",
+                                text = "Manual Setup (First Phone)",
                                 style = MaterialTheme.typography.titleMedium,
                             )
                         }
                         TextButton(onClick = { showGuide = !showGuide }) {
-                            Text(if (showGuide) "Hide" else "Show")
+                            Text(if (showGuide) "Hide guide" else "60s guide")
                         }
                     }
 
@@ -256,22 +421,15 @@ fun OnboardingScreen(
                 onClick = {
                     isConnecting = true
                     errorMessage = null
+                    connectingStatus = "Verifying Bot Swarm & Channel…"
                     scope.launch {
                         runCatching {
                             container.swarmManager.verifyAndConnectSwarm(
                                 rawChannelId = channelInput,
                                 rawTokens = botTokens.toList(),
                             )
-                        }.onSuccess { result ->
-                            isConnecting = false
-                            val pinned = result.pinnedManifestMessage
-                            val hasExistingManifest = pinned?.document?.fileName == CloudManifestEnvelope.MANIFEST_FILE_NAME ||
-                                pinned?.caption?.contains("#ftcloud_manifest") == true
-                            if (hasExistingManifest) {
-                                pendingRestorePrompt = true
-                            } else {
-                                onConnected()
-                            }
+                        }.onSuccess {
+                            finishConnectionWithAutoSync()
                         }.onFailure { err ->
                             isConnecting = false
                             errorMessage = err.message ?: "Failed to connect to Telegram channel."
@@ -291,7 +449,7 @@ fun OnboardingScreen(
                         color = MaterialTheme.colorScheme.onPrimary,
                     )
                     Spacer(Modifier.width(10.dp))
-                    Text("Verifying Bot Swarm & Channel…")
+                    Text(connectingStatus)
                 } else {
                     Icon(Icons.Outlined.CheckCircle, contentDescription = null)
                     Spacer(Modifier.width(8.dp))
@@ -307,15 +465,97 @@ fun OnboardingScreen(
         }
     }
 
-    if (pendingRestorePrompt) {
+    if (showPastePairingDialog) {
         AlertDialog(
-            onDismissRequest = { if (!isRestoring) onConnected() },
-            icon = { Icon(Icons.Outlined.Restore, contentDescription = null) },
-            title = { Text("Existing Cloud Drive Found!") },
+            onDismissRequest = { if (!isConnecting) showPastePairingDialog = false },
+            icon = { Icon(Icons.Outlined.PhonelinkSetup, contentDescription = null) },
+            title = { Text("Login with Pairing Key") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(
-                        "FT-Cloud detected a pinned drive index in this Telegram channel. Restore all your folders, photos, and files onto this device?"
+                        text = "Paste the encrypted FTCLOUD1:... key shared from your first phone and enter the 6-digit PIN shown on its screen.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    OutlinedTextField(
+                        value = pairingKeyInput,
+                        onValueChange = {
+                            pairingKeyInput = it
+                            pairingDialogError = null
+                        },
+                        label = { Text("Encrypted Pairing Key (FTCLOUD1:...)") },
+                        maxLines = 4,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    if (DevicePairingManager.requiresManualPin(pairingKeyInput)) {
+                        OutlinedTextField(
+                            value = pairingPinInput,
+                            onValueChange = {
+                                pairingPinInput = it.filter { ch -> ch.isDigit() }.take(6)
+                                pairingDialogError = null
+                            },
+                            label = { Text("6-Digit Pairing PIN") },
+                            placeholder = { Text("123456") },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                    if (pairingDialogError != null) {
+                        Text(
+                            text = pairingDialogError.orEmpty(),
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    enabled = !isConnecting && pairingKeyInput.isNotBlank(),
+                    onClick = {
+                        isConnecting = true
+                        pairingDialogError = null
+                        connectingStatus = "Decrypting pairing key & connecting Swarm…"
+                        scope.launch {
+                            runCatching {
+                                container.driveRepository.connectViaPairingInput(
+                                    rawInput = pairingKeyInput,
+                                    manualPin = pairingPinInput,
+                                )
+                            }.onSuccess {
+                                showPastePairingDialog = false
+                                finishConnectionWithAutoSync()
+                            }.onFailure { err ->
+                                isConnecting = false
+                                pairingDialogError = err.message ?: "Could not pair device."
+                            }
+                        }
+                    },
+                ) {
+                    Text(if (isConnecting) "Connecting…" else "Unlock & Login")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    enabled = !isConnecting,
+                    onClick = { showPastePairingDialog = false },
+                ) {
+                    Text("Cancel")
+                }
+            },
+        )
+    }
+
+    if (pendingEncryptedRestorePrompt) {
+        AlertDialog(
+            onDismissRequest = { if (!isRestoring) onConnected() },
+            icon = { Icon(Icons.Outlined.Restore, contentDescription = null) },
+            title = { Text("Unlock Encrypted Cloud Index") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        "Your channel's pinned drive index is protected with a Vault passphrase. Enter it once to restore all your folders, photos, and files:"
                     )
                     OutlinedTextField(
                         value = restorePassphrase,
@@ -323,7 +563,7 @@ fun OnboardingScreen(
                             restorePassphrase = it
                             restoreError = null
                         },
-                        label = { Text("Vault passphrase (leave blank if unencrypted)") },
+                        label = { Text("Vault passphrase") },
                         singleLine = true,
                         visualTransformation = PasswordVisualTransformation(),
                         modifier = Modifier.fillMaxWidth(),
@@ -339,35 +579,33 @@ fun OnboardingScreen(
             },
             confirmButton = {
                 FilledTonalButton(
-                    enabled = !isRestoring,
+                    enabled = !isRestoring && restorePassphrase.isNotBlank(),
                     onClick = {
                         isRestoring = true
                         restoreError = null
                         scope.launch {
                             runCatching {
-                                if (restorePassphrase.isNotBlank()) {
-                                    container.driveRepository.configureVaultPassphrase(restorePassphrase)
-                                }
+                                container.driveRepository.configureVaultPassphrase(restorePassphrase)
                                 container.driveRepository.restoreManifestFromChannel(restorePassphrase)
                             }.onSuccess {
                                 isRestoring = false
-                                pendingRestorePrompt = false
+                                pendingEncryptedRestorePrompt = false
                                 onConnected()
                             }.onFailure { err ->
                                 isRestoring = false
-                                restoreError = err.message ?: "Could not restore manifest"
+                                restoreError = err.message ?: "Could not unlock manifest"
                             }
                         }
                     }
                 ) {
-                    Text(if (isRestoring) "Restoring…" else "Restore Drive")
+                    Text(if (isRestoring) "Restoring…" else "Unlock & Restore")
                 }
             },
             dismissButton = {
                 TextButton(
                     enabled = !isRestoring,
                     onClick = {
-                        pendingRestorePrompt = false
+                        pendingEncryptedRestorePrompt = false
                         onConnected()
                     }
                 ) {

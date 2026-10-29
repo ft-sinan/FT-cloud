@@ -25,8 +25,13 @@ import com.ftcloud.app.core.model.FileChunk
 import com.ftcloud.app.core.model.TransferDirection
 import com.ftcloud.app.core.model.TransferStatus
 import com.ftcloud.app.core.model.TransferTask
+import com.ftcloud.app.core.pairing.DevicePairingManager
+import com.ftcloud.app.core.pairing.DevicePairingPayload
+import com.ftcloud.app.core.pairing.GeneratedPairingKit
 import com.ftcloud.app.core.sync.CloudManifestSync
 import com.ftcloud.app.core.sync.ManifestRestoreSummary
+import com.ftcloud.app.core.sync.MultiDeviceSyncResult
+import com.ftcloud.app.core.telegram.ChannelVerificationResult
 import com.ftcloud.app.core.telegram.MultiBotSwarmManager
 import com.ftcloud.app.core.transfer.ChunkedUploadEngine
 import com.ftcloud.app.core.transfer.TransferWorker
@@ -46,6 +51,7 @@ import java.util.Base64
 import java.util.Locale
 import java.util.TimeZone
 import java.util.UUID
+import javax.crypto.spec.SecretKeySpec
 
 data class LocalMediaMetadata(
     val width: Int? = null,
@@ -278,6 +284,7 @@ class DriveRepository(
         }
         chunkDao.deleteChunksForFile(fileId)
         fileDao.deleteById(fileId)
+        settingsRepository.recordDeletedTombstones(fileIds = listOf(fileId))
         scheduleManifestSyncDebounced()
     }
 
@@ -287,11 +294,13 @@ class DriveRepository(
             permanentlyDeleteFile(file.id)
         }
         folderDao.deleteById(folderId)
+        settingsRepository.recordDeletedTombstones(folderIds = listOf(folderId))
         scheduleManifestSyncDebounced()
     }
 
     suspend fun emptyTrash() = withContext(Dispatchers.IO) {
         val trashedFiles = fileDao.getTrashedFilesSnapshot()
+        val trashedFolders = folderDao.getAllFoldersSnapshot().filter { it.isTrashed }
         for (f in trashedFiles) {
             val chunks = chunkDao.getChunksForFile(f.id)
             val msgIds = chunks.map { it.telegramMessageId }.filter { it > 0L }
@@ -302,6 +311,10 @@ class DriveRepository(
             fileDao.deleteById(f.id)
         }
         folderDao.deleteAllTrashed()
+        settingsRepository.recordDeletedTombstones(
+            fileIds = trashedFiles.map { it.id },
+            folderIds = trashedFolders.map { it.id },
+        )
         scheduleManifestSyncDebounced()
     }
 
@@ -460,9 +473,12 @@ class DriveRepository(
 
     suspend fun syncManifestNow(passphrase: String? = null): Long {
         val currentSettings = settingsRepository.getSnapshot()
+        val (deletedFiles, deletedFolders) = settingsRepository.getDeletedTombstones()
         val msgId = manifestSync.pushAndPinManifest(
             previousManifestMessageId = currentSettings.pinnedManifestMessageId,
             passphraseForEnvelope = passphrase?.takeIf { it.isNotBlank() }?.toCharArray(),
+            deletedFileIds = deletedFiles,
+            deletedFolderIds = deletedFolders,
         )
         settingsRepository.recordManifestSync(msgId)
         return msgId
@@ -478,6 +494,92 @@ class DriveRepository(
         return summary
     }
 
+    suspend fun syncMultiDeviceCloud(
+        forcePull: Boolean = false,
+        passphrase: String? = null,
+    ): MultiDeviceSyncResult {
+        val snap = settingsRepository.getSnapshot()
+        if (!snap.isConfigured) return MultiDeviceSyncResult(upToDate = true)
+        val (deletedFiles, deletedFolders) = settingsRepository.getDeletedTombstones()
+        val result = manifestSync.syncFromPinnedManifest(
+            lastKnownMessageId = snap.pinnedManifestMessageId,
+            forcePull = forcePull,
+            passphrase = passphrase?.takeIf { it.isNotBlank() }?.toCharArray(),
+            localDeletedFileIds = deletedFiles,
+            localDeletedFolderIds = deletedFolders,
+        )
+        if (result.pinnedMessageId != null && !result.requiresPassphrase) {
+            settingsRepository.recordManifestSync(result.pinnedMessageId)
+            settingsRepository.recordDeletedTombstones(
+                fileIds = result.mergedDeletedFileIds,
+                folderIds = result.mergedDeletedFolderIds,
+            )
+        }
+        return result
+    }
+
+    suspend fun generateDevicePairingKit(
+        pin: String = DevicePairingManager.generatePin(),
+    ): GeneratedPairingKit = withContext(Dispatchers.IO) {
+        val snap = settingsRepository.getSnapshot()
+        val bots = credentialStore.getBots()
+        val scratchChats = settingsRepository.getBotScratchChats()
+        val vaultKey = credentialStore.getVaultEncryptionKey()
+        val payload = DevicePairingPayload(
+            channelId = credentialStore.getChannelId(),
+            channelTitle = credentialStore.getChannelTitle(),
+            botTokens = bots.map { it.token },
+            botScratchChats = scratchChats,
+            encryptionEnabled = snap.encryptionEnabled && vaultKey != null,
+            vaultSecretKeyBase64 = vaultKey?.encoded?.let { Base64.getEncoder().encodeToString(it) },
+            vaultSaltBase64 = credentialStore.getVaultPassphraseSaltB64(),
+            vaultVerifier = credentialStore.getVaultKeyVerifier(),
+        )
+        DevicePairingManager.createPairingKit(
+            payload = payload,
+            cipher = cipher,
+            pin = pin,
+        )
+    }
+
+    suspend fun connectViaPairingInput(
+        rawInput: String,
+        manualPin: String = "",
+    ): ChannelVerificationResult = withContext(Dispatchers.IO) {
+        val payload = DevicePairingManager.parseAndDecrypt(
+            rawInput = rawInput,
+            manualPin = manualPin,
+            cipher = cipher,
+        )
+        val verified = swarmManager.verifyAndConnectSwarm(
+            rawChannelId = payload.channelId,
+            rawTokens = payload.botTokens,
+        )
+        if (payload.botScratchChats.isNotEmpty()) {
+            settingsRepository.saveBotScratchChatsAll(payload.botScratchChats)
+            for ((botId, chatId) in payload.botScratchChats) {
+                swarmManager.registerBotScratchChat(botId, chatId)
+            }
+        }
+        if (payload.encryptionEnabled &&
+            !payload.vaultSecretKeyBase64.isNullOrBlank() &&
+            !payload.vaultSaltBase64.isNullOrBlank() &&
+            !payload.vaultVerifier.isNullOrBlank()
+        ) {
+            runCatching {
+                val rawKey = Base64.getDecoder().decode(payload.vaultSecretKeyBase64)
+                val secretKey = SecretKeySpec(rawKey, "AES")
+                credentialStore.setVaultEncryptionKey(
+                    secretKey = secretKey,
+                    passphraseRecordSaltB64 = payload.vaultSaltBase64,
+                    verifier = payload.vaultVerifier,
+                )
+                settingsRepository.setEncryptionEnabled(true)
+            }
+        }
+        verified
+    }
+
     fun scheduleManifestSyncDebounced() {
         debouncedSyncJob?.cancel()
         debouncedSyncJob = repoScope.launch {
@@ -485,8 +587,11 @@ class DriveRepository(
             runCatching {
                 val snap = settingsRepository.getSnapshot()
                 if (snap.isConfigured) {
+                    val (deletedFiles, deletedFolders) = settingsRepository.getDeletedTombstones()
                     val msgId = manifestSync.pushAndPinManifest(
                         previousManifestMessageId = snap.pinnedManifestMessageId,
+                        deletedFileIds = deletedFiles,
+                        deletedFolderIds = deletedFolders,
                     )
                     settingsRepository.recordManifestSync(msgId)
                 }

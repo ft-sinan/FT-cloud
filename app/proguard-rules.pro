@@ -34,3 +34,4 @@
 # Tink / Security Crypto (used by EncryptedSharedPreferences)
 -keep class com.google.crypto.tink.** { *; }
 -dontwarn com.google.crypto.tink.**
+-dontwarn com.google.zxing.**

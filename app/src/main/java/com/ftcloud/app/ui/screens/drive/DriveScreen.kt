@@ -31,6 +31,7 @@ import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Clear
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.CloudQueue
+import androidx.compose.material.icons.outlined.CloudSync
 import androidx.compose.material.icons.outlined.CreateNewFolder
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.DriveFileMove
@@ -241,6 +242,33 @@ fun DriveScreen(
                         )
                     },
                     trailing = {
+                        HeaderCircleButton(
+                            icon = Icons.Outlined.CloudSync,
+                            contentDescription = "Sync across devices",
+                            onClick = {
+                                if (!isSyncingManifest) {
+                                    isSyncingManifest = true
+                                    scope.launch {
+                                        runCatching {
+                                            val merge = repo.syncMultiDeviceCloud(forcePull = false)
+                                            val live = container.channelMediaImporter.syncPendingBotUpdates()
+                                            merge to live
+                                        }.onSuccess { (merge, live) ->
+                                            val added = merge.addedFiles + live.importedFiles
+                                            val msg = when {
+                                                added > 0 -> "Synced across devices • +$added new ${if (added == 1) "item" else "items"}"
+                                                merge.updatedFiles > 0 || merge.removedFiles > 0 -> "Synced folder & file changes across devices"
+                                                else -> "All phones in sync"
+                                            }
+                                            snackbarHostState.showSnackbar(msg)
+                                        }.onFailure { err ->
+                                            snackbarHostState.showSnackbar(err.message ?: "Cloud sync failed")
+                                        }
+                                        isSyncingManifest = false
+                                    }
+                                }
+                            },
+                        )
                         HeaderCircleButton(
                             icon = if (settings.viewMode == DriveViewMode.LIST) {
                                 Icons.Outlined.GridView

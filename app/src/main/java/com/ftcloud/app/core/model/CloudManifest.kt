@@ -60,11 +60,13 @@ data class ManifestFileDto(
 
 @Serializable
 data class CloudManifestPayload(
-    val schemaVersion: Int = 1,
+    val schemaVersion: Int = 2,
     val exportedAt: Long,
     val channelId: String,
     val folders: List<ManifestFolderDto>,
     val files: List<ManifestFileDto>,
+    val deletedFileIds: List<String> = emptyList(),
+    val deletedFolderIds: List<String> = emptyList(),
 )
 
 @Serializable

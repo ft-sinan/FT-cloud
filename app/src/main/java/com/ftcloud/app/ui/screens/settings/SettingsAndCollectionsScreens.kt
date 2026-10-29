@@ -1,7 +1,10 @@
 package com.ftcloud.app.ui.screens.settings
 
+import android.content.Intent
+import android.graphics.Bitmap
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
@@ -32,18 +35,24 @@ import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.CloudSync
+import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.DeleteForever
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.NetworkCheck
+import androidx.compose.material.icons.outlined.PhonelinkSetup
+import androidx.compose.material.icons.outlined.QrCode2
 import androidx.compose.material.icons.outlined.Restore
 import androidx.compose.material.icons.outlined.RestoreFromTrash
+import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.StarBorder
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
@@ -76,15 +85,22 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.ftcloud.app.BuildConfig
 import com.ftcloud.app.core.model.AccentColor
 import com.ftcloud.app.core.model.AppSettings
 import com.ftcloud.app.core.model.AppThemeMode
+import com.ftcloud.app.core.model.DriveStats
 import com.ftcloud.app.core.model.FormatUtils
+import com.ftcloud.app.core.pairing.DevicePairingManager
+import com.ftcloud.app.core.pairing.GeneratedPairingKit
 import com.ftcloud.app.core.sync.ChannelScanScheduler
 import com.ftcloud.app.core.update.AppUpdateManager
 import com.ftcloud.app.core.update.UpdateRelease
@@ -95,7 +111,9 @@ import com.ftcloud.app.ui.components.ExpressiveBackTopBar
 import com.ftcloud.app.ui.components.ExpressiveHeroHeader
 import com.ftcloud.app.ui.components.springPress
 import com.ftcloud.app.ui.theme.accentColorValue
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 
 private sealed interface UpdateStatus {
@@ -120,13 +138,16 @@ fun SettingsScreen(
     onOpenTrash: () -> Unit,
 ) {
     val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
     val botStatuses by container.swarmManager.runtimeStatuses.collectAsState()
+    val stats by container.driveRepository.observeStats().collectAsState(initial = DriveStats())
 
     var cacheUsedBytes by remember { mutableLongStateOf(container.driveRepository.getCurrentCacheBytes()) }
     var isImportingJson by remember { mutableStateOf(false) }
     var isSyncingUpdates by remember { mutableStateOf(false) }
+    var isSyncingDevices by remember { mutableStateOf(false) }
     var showAddBotDialog by remember { mutableStateOf(false) }
     var newBotToken by rememberSaveable { mutableStateOf("") }
     var showEncryptionDialog by remember { mutableStateOf(false) }
@@ -134,6 +155,10 @@ fun SettingsScreen(
     var showRestoreDialog by remember { mutableStateOf(false) }
     var restorePassphraseInput by rememberSaveable { mutableStateOf("") }
     var showDisconnectConfirm by remember { mutableStateOf(false) }
+
+    var activePairingKit by remember { mutableStateOf<GeneratedPairingKit?>(null) }
+    var activePairingQrBitmap by remember { mutableStateOf<Bitmap?>(null) }
+    var isGeneratingPairing by remember { mutableStateOf(false) }
 
     var updateStatus by remember { mutableStateOf<UpdateStatus>(UpdateStatus.Idle) }
     var downloadedUpdateApk by remember { mutableStateOf<File?>(null) }
@@ -273,6 +298,121 @@ fun SettingsScreen(
                     },
                     modifier = Modifier.padding(horizontal = 16.dp),
                 )
+            }
+
+            item {
+                Card(
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                    shape = RoundedCornerShape(22.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.55f),
+                    ),
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Outlined.PhonelinkSetup,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                            )
+                            Spacer(Modifier.width(10.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Multi-Device & Second-Phone Login", style = MaterialTheme.typography.titleMedium)
+                                Text(
+                                    text = "Use FT Cloud seamlessly across multiple phones. Scan a QR code or share an encrypted 6-digit PIN pairing key to log in on your second phone.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+
+                        Button(
+                            enabled = !isGeneratingPairing,
+                            onClick = {
+                                isGeneratingPairing = true
+                                scope.launch {
+                                    runCatching { container.driveRepository.syncManifestNow() }
+                                    runCatching {
+                                        val kit = container.driveRepository.generateDevicePairingKit()
+                                        val qrBmp = withContext(Dispatchers.Default) {
+                                            DevicePairingManager.renderQrBitmap(kit.qrPayload, sizePx = 640)
+                                        }
+                                        kit to qrBmp
+                                    }.onSuccess { (kit, bmp) ->
+                                        activePairingKit = kit
+                                        activePairingQrBitmap = bmp
+                                    }.onFailure { err ->
+                                        snackbarHostState.showSnackbar(err.message ?: "Failed to generate pairing kit")
+                                    }
+                                    isGeneratingPairing = false
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Icon(Icons.Outlined.QrCode2, contentDescription = null)
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                if (isGeneratingPairing) {
+                                    "Preparing Cloud Sync & QR…"
+                                } else {
+                                    "Link a Second Phone (QR Code & PIN)"
+                                }
+                            )
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Auto-Sync Across Phones", style = MaterialTheme.typography.bodyLarge)
+                                Text(
+                                    "Automatically merge new uploads, folders & edits made on other phones when FT Cloud opens",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            Switch(
+                                checked = settings.multiDeviceAutoSync,
+                                onCheckedChange = {
+                                    scope.launch { container.settingsRepository.setMultiDeviceAutoSync(it) }
+                                },
+                            )
+                        }
+
+                        OutlinedButton(
+                            enabled = !isSyncingDevices,
+                            onClick = {
+                                isSyncingDevices = true
+                                scope.launch {
+                                    runCatching {
+                                        val merge = container.driveRepository.syncMultiDeviceCloud(forcePull = false)
+                                        val live = container.channelMediaImporter.syncPendingBotUpdates()
+                                        container.driveRepository.syncManifestNow()
+                                        merge to live
+                                    }.onSuccess { (merge, live) ->
+                                        val added = merge.addedFiles + live.importedFiles
+                                        snackbarHostState.showSnackbar(
+                                            if (added > 0) "Synced across devices • +$added new items"
+                                            else "All phones are in sync (${stats.totalFiles} files)"
+                                        )
+                                    }.onFailure { err ->
+                                        snackbarHostState.showSnackbar(err.message ?: "Sync failed")
+                                    }
+                                    isSyncingDevices = false
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Icon(Icons.Outlined.CloudSync, contentDescription = null)
+                            Spacer(Modifier.width(6.dp))
+                            Text(if (isSyncingDevices) "Syncing Devices…" else "Sync All Phones Now")
+                        }
+                    }
+                }
             }
 
             item {
@@ -429,6 +569,34 @@ fun SettingsScreen(
                             text = "Import Pre-Existing Channel Media",
                             style = MaterialTheme.typography.titleMedium,
                         )
+                        Card(
+                            shape = RoundedCornerShape(14.dp),
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.65f),
+                            ),
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Outlined.CheckCircle,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(20.dp),
+                                )
+                                Spacer(Modifier.width(10.dp))
+                                Text(
+                                    text = if (stats.totalFiles > 0) {
+                                        "One-time import only: ${stats.totalFiles} files are saved in your channel's Pinned Cloud Index. Installing FT Cloud from scratch or logging in on a second phone restores everything automatically in ~1s — you never need to run this scanner again!"
+                                    } else {
+                                        "One-time import only: Once imported, FT Cloud saves the index in your channel's Pinned Manifest so reinstalls and second phones restore all media automatically without re-scanning."
+                                    },
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                )
+                            }
+                        }
                         Text(
                             text = "Already have 7,000+ photos, videos, or files in this channel from Telegram or another app? Bring them into 'Imported from Channel' and your Gallery with zero re-uploading:",
                             style = MaterialTheme.typography.bodySmall,
@@ -845,6 +1013,127 @@ fun SettingsScreen(
                 }
             }
         }
+    }
+
+    val pairingKit = activePairingKit
+    val pairingBitmap = activePairingQrBitmap
+    if (pairingKit != null) {
+        AlertDialog(
+            onDismissRequest = {
+                activePairingKit = null
+                activePairingQrBitmap = null
+            },
+            icon = { Icon(Icons.Outlined.PhonelinkSetup, contentDescription = null) },
+            title = { Text("Link a Second Phone") },
+            text = {
+                Column(
+                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Text(
+                        text = "On your second phone, open FT Cloud and tap 'Scan QR' — or share the encrypted Pairing Key below and unlock it with this 6-digit PIN:",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
+                    )
+
+                    if (pairingBitmap != null) {
+                        Box(
+                            modifier = Modifier
+                                .size(220.dp)
+                                .clip(RoundedCornerShape(18.dp))
+                                .background(Color.White)
+                                .padding(10.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Image(
+                                bitmap = pairingBitmap.asImageBitmap(),
+                                contentDescription = "FT Cloud Second Phone Login QR Code",
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        }
+                    }
+
+                    Card(
+                        shape = RoundedCornerShape(14.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.primaryContainer,
+                        ),
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 10.dp, horizontal = 14.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                        ) {
+                            Text(
+                                text = "6-DIGIT PAIRING PIN",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            )
+                            Text(
+                                text = "${pairingKit.pin.take(3)} • ${pairingKit.pin.takeLast(3)}",
+                                style = MaterialTheme.typography.headlineMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            )
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        FilledTonalButton(
+                            onClick = {
+                                clipboard.setText(AnnotatedString(pairingKit.encryptedPairingCode))
+                                scope.launch {
+                                    snackbarHostState.showSnackbar("Copied encrypted Pairing Key (safe to send via Saved Messages)")
+                                }
+                            },
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Icon(Icons.Outlined.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Copy Key")
+                        }
+                        OutlinedButton(
+                            onClick = {
+                                val sendIntent = Intent(Intent.ACTION_SEND).apply {
+                                    type = "text/plain"
+                                    putExtra(
+                                        Intent.EXTRA_TEXT,
+                                        "FT Cloud Encrypted Pairing Key (unlock with 6-digit PIN shown on Phone 1):\n\n${pairingKit.encryptedPairingCode}"
+                                    )
+                                }
+                                context.startActivity(Intent.createChooser(sendIntent, "Share Encrypted Pairing Key"))
+                            },
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Icon(Icons.Outlined.Share, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Share Key")
+                        }
+                    }
+
+                    Text(
+                        text = "Security: Your Bot Tokens are AES-256-GCM encrypted using the 6-digit PIN above — never sent in plaintext.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    activePairingKit = null
+                    activePairingQrBitmap = null
+                }) {
+                    Text("Done")
+                }
+            },
+        )
     }
 
     val dialogAvailableRelease = (updateStatus as? UpdateStatus.Available)?.release
