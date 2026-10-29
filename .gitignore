@@ -13,6 +13,7 @@
 *.aab
 *.ap_
 *.dex
+gradle-ci.log
 
 # Keystores & local signing secrets
 *.jks

@@ -32,22 +32,36 @@ jobs:
         run: chmod +x gradlew
 
       - name: Run unit tests
-        run: ./gradlew testDebugUnitTest --stacktrace
+        shell: bash
+        run: |
+          set -o pipefail
+          ./gradlew testDebugUnitTest --stacktrace 2>&1 | tee -a gradle-ci.log
+
+      - name: Assemble Debug & Release APKs
+        shell: bash
+        run: |
+          set -o pipefail
+          ./gradlew assembleDebug assembleRelease --stacktrace 2>&1 | tee -a gradle-ci.log
 
       - name: Run Android Lint
-        run: ./gradlew lintDebug --stacktrace
+        shell: bash
+        run: |
+          set -o pipefail
+          ./gradlew lintDebug --stacktrace 2>&1 | tee -a gradle-ci.log
 
-      - name: Surface Lint errors as annotations on failure
+      - name: Surface failure diagnostics as annotations
         if: failure()
         run: |
           if [ -f app/build/reports/lint-results-debug.txt ]; then
-            grep -E "Error:" app/build/reports/lint-results-debug.txt | head -n 20 | while IFS= read -r line; do
-              echo "::error::$line"
+            grep -E "Error:" app/build/reports/lint-results-debug.txt | head -n 15 | while IFS= read -r line; do
+              echo "::error title=Lint::$line"
             done
           fi
-
-      - name: Assemble Debug & Release APKs
-        run: ./gradlew assembleDebug assembleRelease --stacktrace
+          if [ -f gradle-ci.log ]; then
+            grep -E "(^e: |FAILURE:|What went wrong:|^\* |Exception|Error:)" gradle-ci.log | tail -n 15 | while IFS= read -r line; do
+              echo "::error title=Gradle::$line"
+            done
+          fi
 
       - name: Upload Debug APK artifact
         uses: actions/upload-artifact@v4
