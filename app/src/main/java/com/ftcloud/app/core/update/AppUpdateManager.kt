@@ -57,8 +57,10 @@ data class UpdateRelease(
     val notes: String,
     val apkName: String,
     val apkDownloadUrl: String,
+    val apkApiUrl: String? = null,
     val apkSizeBytes: Long,
     val checksumDownloadUrl: String?,
+    val checksumApiUrl: String? = null,
 )
 
 @Serializable
@@ -72,13 +74,15 @@ internal data class GitHubReleaseDto(
 @Serializable
 internal data class GitHubReleaseAssetDto(
     val name: String = "",
+    val url: String = "",
     @SerialName("browser_download_url") val browserDownloadUrl: String = "",
     val size: Long = 0L,
 )
 
 /**
- * GitHub Releases in-app update checker, SHA-256 verifier, and APK installer
- * following the FT Vault / FT Cloud update architecture.
+ * GitHub Releases in-app update checker, SHA-256 verifier, and APK installer.
+ * Supports both Public GitHub repositories (zero config) and Private GitHub repositories
+ * (via an optional read-only Fine-Grained Token with `Contents: Read` permission).
  */
 object AppUpdateManager {
     private const val LATEST_RELEASE_URL =
@@ -94,9 +98,9 @@ object AppUpdateManager {
         val tag = dto.tagName.trim()
         require(tag.isNotBlank()) { "Release tag missing" }
 
-        // Prefer release APK over debug APK if multiple APKs are attached
         val apkAssets = dto.assets.filter {
-            it.name.endsWith(".apk", ignoreCase = true) && it.browserDownloadUrl.isNotBlank()
+            it.name.endsWith(".apk", ignoreCase = true) &&
+                (it.browserDownloadUrl.isNotBlank() || it.url.isNotBlank())
         }
         val chosenApk = apkAssets.firstOrNull { !it.name.contains("debug", ignoreCase = true) }
             ?: apkAssets.firstOrNull()
@@ -106,7 +110,8 @@ object AppUpdateManager {
             val lower = asset.name.lowercase()
             (lower == "${chosenApk.name.lowercase()}.sha256" ||
                 lower.endsWith(".sha256") ||
-                lower.contains("checksum")) && asset.browserDownloadUrl.isNotBlank()
+                lower.contains("checksum")) &&
+                (asset.browserDownloadUrl.isNotBlank() || asset.url.isNotBlank())
         }
 
         return UpdateRelease(
@@ -115,20 +120,32 @@ object AppUpdateManager {
             name = dto.name.trim().ifBlank { "FT Cloud $tag" },
             notes = dto.body?.trim()?.takeIf { it.isNotBlank() && it != "null" }.orEmpty(),
             apkName = chosenApk.name,
-            apkDownloadUrl = chosenApk.browserDownloadUrl,
+            apkDownloadUrl = chosenApk.browserDownloadUrl.ifBlank { chosenApk.url },
+            apkApiUrl = chosenApk.url.takeIf { it.isNotBlank() },
             apkSizeBytes = chosenApk.size,
-            checksumDownloadUrl = checksumAsset?.browserDownloadUrl,
+            checksumDownloadUrl = checksumAsset?.let { it.browserDownloadUrl.ifBlank { it.url } },
+            checksumApiUrl = checksumAsset?.url?.takeIf { it.isNotBlank() },
         )
     }
 
-    suspend fun fetchLatestRelease(url: String = LATEST_RELEASE_URL): UpdateRelease =
-        withContext(Dispatchers.IO) {
-            parseReleaseJson(fetchText(url, githubApi = true))
-        }
+    suspend fun fetchLatestRelease(
+        url: String = LATEST_RELEASE_URL,
+        githubToken: String? = null,
+    ): UpdateRelease = withContext(Dispatchers.IO) {
+        val token = githubToken?.trim()?.takeIf { it.isNotBlank() }
+        parseReleaseJson(
+            fetchText(
+                url = url,
+                accept = "application/vnd.github+json",
+                githubToken = token,
+            )
+        )
+    }
 
     suspend fun downloadReleaseApk(
         context: Context,
         release: UpdateRelease,
+        githubToken: String? = null,
         onProgress: (Int?) -> Unit,
     ): File = withContext(Dispatchers.IO) {
         val updatesDir = File(context.cacheDir, "updates").apply { mkdirs() }
@@ -136,10 +153,29 @@ object AppUpdateManager {
         val destination = File(updatesDir, safeName)
         if (destination.exists()) destination.delete()
 
-        val connection = openConnection(release.apkDownloadUrl, githubApi = false)
+        val token = githubToken?.trim()?.takeIf { it.isNotBlank() }
+        // Private GitHub repos require downloading via the REST API asset endpoint with Accept: application/octet-stream
+        val effectiveUrl = if (token != null && !release.apkApiUrl.isNullOrBlank()) {
+            release.apkApiUrl
+        } else {
+            release.apkDownloadUrl
+        }
+        val acceptHeader = if (token != null && !release.apkApiUrl.isNullOrBlank()) {
+            "application/octet-stream"
+        } else {
+            "*/*"
+        }
+
+        val connection = openFollowingRedirects(
+            initialUrl = effectiveUrl,
+            accept = acceptHeader,
+            githubToken = token,
+        )
         try {
             val responseCode = connection.responseCode
-            check(responseCode in 200..299) { "APK download failed: HTTP $responseCode" }
+            if (responseCode !in 200..299) {
+                throw IllegalStateException(formatHttpError(responseCode, token != null, forAsset = true))
+            }
             val total = connection.contentLengthLong
                 .takeIf { it > 0L }
                 ?: release.apkSizeBytes.takeIf { it > 0L }
@@ -175,15 +211,34 @@ object AppUpdateManager {
     }
 
     /** Returns null when no checksum sidecar was published, or true/false on SHA-256 comparison. */
-    suspend fun verifyChecksum(release: UpdateRelease, apk: File): Boolean? =
-        withContext(Dispatchers.IO) {
-            val checksumUrl = release.checksumDownloadUrl ?: return@withContext null
-            val expected = ChecksumParser.expectedHash(
-                checksumText = fetchText(checksumUrl, githubApi = false),
-                apkName = release.apkName,
-            ) ?: return@withContext null
-            expected.equals(sha256(apk), ignoreCase = true)
+    suspend fun verifyChecksum(
+        release: UpdateRelease,
+        apk: File,
+        githubToken: String? = null,
+    ): Boolean? = withContext(Dispatchers.IO) {
+        val token = githubToken?.trim()?.takeIf { it.isNotBlank() }
+        val checksumUrl = if (token != null && !release.checksumApiUrl.isNullOrBlank()) {
+            release.checksumApiUrl
+        } else {
+            release.checksumDownloadUrl
+        } ?: return@withContext null
+
+        val acceptHeader = if (token != null && !release.checksumApiUrl.isNullOrBlank()) {
+            "application/octet-stream"
+        } else {
+            "*/*"
         }
+
+        val expected = ChecksumParser.expectedHash(
+            checksumText = fetchText(
+                url = checksumUrl,
+                accept = acceptHeader,
+                githubToken = token,
+            ),
+            apkName = release.apkName,
+        ) ?: return@withContext null
+        expected.equals(sha256(apk), ignoreCase = true)
+    }
 
     fun canInstallPackages(context: Context): Boolean =
         Build.VERSION.SDK_INT < Build.VERSION_CODES.O ||
@@ -215,28 +270,84 @@ object AppUpdateManager {
         context.startActivity(intent)
     }
 
-    private fun fetchText(url: String, githubApi: Boolean): String {
-        val connection = openConnection(url, githubApi)
+    private fun fetchText(
+        url: String,
+        accept: String,
+        githubToken: String?,
+    ): String {
+        val connection = openFollowingRedirects(
+            initialUrl = url,
+            accept = accept,
+            githubToken = githubToken,
+        )
         return try {
             val responseCode = connection.responseCode
-            check(responseCode in 200..299) { "Request failed: HTTP $responseCode" }
+            if (responseCode !in 200..299) {
+                throw IllegalStateException(formatHttpError(responseCode, githubToken != null, forAsset = false))
+            }
             connection.inputStream.bufferedReader().use { it.readText() }
         } finally {
             connection.disconnect()
         }
     }
 
-    private fun openConnection(url: String, githubApi: Boolean): HttpURLConnection =
-        (URL(url).openConnection() as HttpURLConnection).apply {
-            connectTimeout = 20_000
-            readTimeout = 30_000
-            instanceFollowRedirects = true
-            setRequestProperty("User-Agent", "FTCloud-Android")
-            if (githubApi) {
-                setRequestProperty("Accept", "application/vnd.github+json")
-                setRequestProperty("X-GitHub-Api-Version", "2022-11-28")
+    private fun openFollowingRedirects(
+        initialUrl: String,
+        accept: String,
+        githubToken: String?,
+    ): HttpURLConnection {
+        var currentUrl = URL(initialUrl)
+        val initialHost = currentUrl.host
+        var attachAuth = !githubToken.isNullOrBlank()
+        var currentAccept = accept
+
+        repeat(6) {
+            val conn = (currentUrl.openConnection() as HttpURLConnection).apply {
+                connectTimeout = 20_000
+                readTimeout = 30_000
+                instanceFollowRedirects = false
+                setRequestProperty("User-Agent", "FTCloud-Android")
+                setRequestProperty("Accept", currentAccept)
+                if (attachAuth && !githubToken.isNullOrBlank()) {
+                    setRequestProperty("Authorization", "Bearer $githubToken")
+                    setRequestProperty("X-GitHub-Api-Version", "2022-11-28")
+                } else if (currentAccept == "application/vnd.github+json") {
+                    setRequestProperty("X-GitHub-Api-Version", "2022-11-28")
+                }
+            }
+            val code = conn.responseCode
+            if (code in listOf(301, 302, 303, 307, 308)) {
+                val location = conn.getHeaderField("Location")
+                conn.disconnect()
+                check(!location.isNullOrBlank()) { "Redirect missing Location header" }
+                val nextUrl = URL(currentUrl, location)
+                // Never forward GitHub Authorization header to external CDN / S3 / Azure Blob redirect targets
+                if (!nextUrl.host.equals(initialHost, ignoreCase = true)) {
+                    attachAuth = false
+                    currentAccept = "*/*"
+                }
+                currentUrl = nextUrl
+            } else {
+                return conn
             }
         }
+        error("Too many HTTP redirects while contacting GitHub Releases")
+    }
+
+    private fun formatHttpError(code: Int, hadToken: Boolean, forAsset: Boolean): String = when {
+        code == 404 && !hadToken -> {
+            "GitHub returned HTTP 404 because 'ft-sinan/FT-cloud' is currently Private. " +
+                "Either change the repository visibility to Public in GitHub Settings, or tap 'Private Repo Token' below to add a read-only GitHub token (Contents: Read)."
+        }
+        code in listOf(401, 403, 404) && hadToken -> {
+            if (forAsset) {
+                "Could not download private release asset (HTTP $code). Verify your GitHub token has 'Contents: Read' access to ft-sinan/FT-cloud."
+            } else {
+                "GitHub token could not access ft-sinan/FT-cloud releases (HTTP $code). Ensure the token is valid and has 'Contents: Read' permission."
+            }
+        }
+        else -> "GitHub update request failed: HTTP $code"
+    }
 
     internal fun sha256(file: File): String {
         val digest = MessageDigest.getInstance("SHA-256")

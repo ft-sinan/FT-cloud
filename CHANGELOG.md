@@ -2,6 +2,13 @@
 
 All notable changes to **FT Cloud** are documented in this file.
 
+## [1.2.1] - 2026-10-29
+
+### Fixed & Improved
+- **In-App Updater Support for Private & Public GitHub Repositories**:
+  - Explained why GitHub returns `HTTP 404` when `ft-sinan/FT-cloud` is set to **Private** (unauthenticated clients cannot view private repository releases).
+  - Added optional **Private Repo Token** support (`Settings → App Updates → Private Repo`) stored in Android Keystore (and synced via QR/PIN device pairing) using GitHub REST API `Accept: application/octet-stream` asset downloads + safe cross-host redirect handling, so updates work seamlessly whether `ft-sinan/FT-cloud` is kept **Private** or switched to **Public**.
+
 ## [1.2.0] - 2026-10-29
 
 ### Added

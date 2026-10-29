@@ -534,6 +534,7 @@ class DriveRepository(
             vaultSecretKeyBase64 = vaultKey?.encoded?.let { Base64.getEncoder().encodeToString(it) },
             vaultSaltBase64 = credentialStore.getVaultPassphraseSaltB64(),
             vaultVerifier = credentialStore.getVaultKeyVerifier(),
+            githubUpdateToken = credentialStore.getGithubUpdateToken(),
         )
         DevicePairingManager.createPairingKit(
             payload = payload,
@@ -576,6 +577,9 @@ class DriveRepository(
                 )
                 settingsRepository.setEncryptionEnabled(true)
             }
+        }
+        if (payload.githubUpdateToken.isNotBlank()) {
+            credentialStore.saveGithubUpdateToken(payload.githubUpdateToken)
         }
         verified
     }

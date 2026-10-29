@@ -172,7 +172,8 @@ fun FTCloudAppShell(
         if (!startupChecked && System.currentTimeMillis() - settings.lastUpdateCheckAt >= 86_400_000L) {
             startupChecked = true
             container.settingsRepository.markUpdateChecked()
-            runCatching { AppUpdateManager.fetchLatestRelease() }
+            val ghToken = container.credentialStore.getGithubUpdateToken()
+            runCatching { AppUpdateManager.fetchLatestRelease(githubToken = ghToken) }
                 .onSuccess { release ->
                     if (UpdateVersion.isNewer(release.versionName, BuildConfig.VERSION_NAME)) {
                         startupUpdateRelease = release

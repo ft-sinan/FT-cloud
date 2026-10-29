@@ -143,6 +143,7 @@ fun SettingsScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     val botStatuses by container.swarmManager.runtimeStatuses.collectAsState()
     val stats by container.driveRepository.observeStats().collectAsState(initial = DriveStats())
+    val githubUpdateToken by container.credentialStore.githubUpdateTokenFlow.collectAsState()
 
     var cacheUsedBytes by remember { mutableLongStateOf(container.driveRepository.getCurrentCacheBytes()) }
     var isImportingJson by remember { mutableStateOf(false) }
@@ -164,6 +165,8 @@ fun SettingsScreen(
     var downloadedUpdateApk by remember { mutableStateOf<File?>(null) }
     var showUpdateAvailableDialog by remember { mutableStateOf(false) }
     var autoUpdateCheckStarted by rememberSaveable { mutableStateOf(false) }
+    var showGithubTokenDialog by remember { mutableStateOf(false) }
+    var githubTokenDraft by rememberSaveable { mutableStateOf("") }
 
     fun runUpdateCheck(automatic: Boolean) {
         if (updateStatus is UpdateStatus.Checking ||
@@ -174,7 +177,8 @@ fun SettingsScreen(
         scope.launch {
             container.settingsRepository.markUpdateChecked()
             updateStatus = UpdateStatus.Checking
-            runCatching { AppUpdateManager.fetchLatestRelease() }
+            val ghToken = container.credentialStore.getGithubUpdateToken()
+            runCatching { AppUpdateManager.fetchLatestRelease(githubToken = ghToken) }
                 .onSuccess { release ->
                     if (UpdateVersion.isNewer(release.versionName, BuildConfig.VERSION_NAME)) {
                         downloadedUpdateApk = null
@@ -214,12 +218,13 @@ fun SettingsScreen(
         }
         scope.launch {
             try {
+                val ghToken = container.credentialStore.getGithubUpdateToken()
                 updateStatus = UpdateStatus.Downloading(release, null)
-                val apk = AppUpdateManager.downloadReleaseApk(context, release) { progress ->
+                val apk = AppUpdateManager.downloadReleaseApk(context, release, githubToken = ghToken) { progress ->
                     updateStatus = UpdateStatus.Downloading(release, progress)
                 }
                 updateStatus = UpdateStatus.Verifying(release)
-                val verified = AppUpdateManager.verifyChecksum(release, apk)
+                val verified = AppUpdateManager.verifyChecksum(release, apk, githubToken = ghToken)
                 if (release.checksumDownloadUrl != null && verified != true) {
                     apk.delete()
                     updateStatus = UpdateStatus.Failed("SHA-256 checksum verification failed for downloaded APK.")
@@ -291,10 +296,15 @@ fun SettingsScreen(
                 AppUpdateCard(
                     status = updateStatus,
                     hasDownloadedApk = downloadedUpdateApk != null,
+                    hasPrivateRepoToken = githubUpdateToken.isNotBlank(),
                     onCheck = { runUpdateCheck(automatic = false) },
                     onDownload = ::downloadAndInstallUpdate,
                     onAllowInstalls = {
                         runCatching { AppUpdateManager.openInstallPermissionSettings(context) }
+                    },
+                    onConfigurePrivateRepoToken = {
+                        githubTokenDraft = githubUpdateToken
+                        showGithubTokenDialog = true
                     },
                     modifier = Modifier.padding(horizontal = 16.dp),
                 )
@@ -1136,6 +1146,56 @@ fun SettingsScreen(
         )
     }
 
+    if (showGithubTokenDialog) {
+        AlertDialog(
+            onDismissRequest = { showGithubTokenDialog = false },
+            title = { Text("Private GitHub Repo Token") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        text = "If ft-sinan/FT-cloud is kept Private on GitHub, GitHub returns HTTP 404 to unauthenticated apps. Either make the repo Public in GitHub Settings, or paste a read-only GitHub Fine-Grained Token (Repository access: FT-cloud → Permissions: Contents = Read-only):",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    OutlinedTextField(
+                        value = githubTokenDraft,
+                        onValueChange = { githubTokenDraft = it },
+                        label = { Text("GitHub Token (github_pat_...)") },
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    container.credentialStore.saveGithubUpdateToken(githubTokenDraft)
+                    showGithubTokenDialog = false
+                    updateStatus = UpdateStatus.Idle
+                    runUpdateCheck(automatic = false)
+                }) {
+                    Text("Save & Check")
+                }
+            },
+            dismissButton = {
+                Row {
+                    if (githubUpdateToken.isNotBlank()) {
+                        TextButton(onClick = {
+                            container.credentialStore.saveGithubUpdateToken("")
+                            githubTokenDraft = ""
+                            showGithubTokenDialog = false
+                        }) {
+                            Text("Clear", color = MaterialTheme.colorScheme.error)
+                        }
+                    }
+                    TextButton(onClick = { showGithubTokenDialog = false }) {
+                        Text("Cancel")
+                    }
+                }
+            },
+        )
+    }
+
     val dialogAvailableRelease = (updateStatus as? UpdateStatus.Available)?.release
     if (showUpdateAvailableDialog && dialogAvailableRelease != null) {
         AlertDialog(
@@ -1538,9 +1598,11 @@ fun TrashScreen(
 private fun AppUpdateCard(
     status: UpdateStatus,
     hasDownloadedApk: Boolean,
+    hasPrivateRepoToken: Boolean,
     onCheck: () -> Unit,
     onDownload: (UpdateRelease) -> Unit,
     onAllowInstalls: () -> Unit,
+    onConfigurePrivateRepoToken: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Card(
@@ -1564,10 +1626,17 @@ private fun AppUpdateCard(
                 Column(modifier = Modifier.weight(1f)) {
                     Text("App Updates", style = MaterialTheme.typography.titleMedium)
                     Text(
-                        text = "Installed: v${BuildConfig.VERSION_NAME} (code ${BuildConfig.VERSION_CODE}) • Seamless in-place APK upgrades",
+                        text = if (hasPrivateRepoToken) {
+                            "Installed: v${BuildConfig.VERSION_NAME} • Private-repo token active"
+                        } else {
+                            "Installed: v${BuildConfig.VERSION_NAME} (code ${BuildConfig.VERSION_CODE}) • Seamless in-place APK upgrades"
+                        },
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                }
+                TextButton(onClick = onConfigurePrivateRepoToken) {
+                    Text(if (hasPrivateRepoToken) "Token ✓" else "Private Repo")
                 }
             }
 
@@ -1692,11 +1761,19 @@ private fun AppUpdateCard(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.error,
                     )
-                    OutlinedButton(
-                        onClick = onCheck,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Text("Retry Update Check")
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(
+                            onClick = onCheck,
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Text("Retry Check")
+                        }
+                        FilledTonalButton(
+                            onClick = onConfigurePrivateRepoToken,
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Text(if (hasPrivateRepoToken) "Edit Repo Token" else "Private Repo Token")
+                        }
                     }
                 }
             }

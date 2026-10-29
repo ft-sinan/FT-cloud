@@ -37,6 +37,7 @@ data class DevicePairingPayload(
     val vaultSecretKeyBase64: String? = null,
     val vaultSaltBase64: String? = null,
     val vaultVerifier: String? = null,
+    val githubUpdateToken: String = "",
     val createdAt: Long = System.currentTimeMillis(),
 )
 

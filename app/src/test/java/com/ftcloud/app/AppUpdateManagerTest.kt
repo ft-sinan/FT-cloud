@@ -3,10 +3,14 @@ package com.ftcloud.app
 import com.ftcloud.app.core.update.AppUpdateManager
 import com.ftcloud.app.core.update.ChecksumParser
 import com.ftcloud.app.core.update.UpdateVersion
+import kotlinx.coroutines.runBlocking
+import okhttp3.mockwebserver.MockResponse
+import okhttp3.mockwebserver.MockWebServer
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Test
 import java.io.File
 
@@ -18,7 +22,7 @@ class AppUpdateManagerTest {
         assertEquals("2.0.1", UpdateVersion.normalize("V2.0.1-rc1+build4"))
 
         assertTrue(UpdateVersion.isNewer("v1.1.0", "1.0.0"))
-        assertTrue(UpdateVersion.isNewer("1.2.0", "1.1.9"))
+        assertTrue(UpdateVersion.isNewer("1.2.1", "1.2.0"))
         assertTrue(UpdateVersion.isNewer("1.1.1", "1.1"))
         assertFalse(UpdateVersion.isNewer("v1.1.0", "1.1.0"))
         assertFalse(UpdateVersion.isNewer("v1.0.9", "1.1.0"))
@@ -40,26 +44,29 @@ class AppUpdateManagerTest {
     }
 
     @Test
-    fun `parseReleaseJson prefers signed release apk and finds sha256 sidecar`() {
+    fun `parseReleaseJson prefers signed release apk and captures api url for private repos`() {
         val sampleJson = """
             {
-              "tag_name": "v1.1.0",
-              "name": "FT Cloud v1.1.0 — Orion Expressive & In-App Updater",
-              "body": "### What's New\n- Signature Orion Material 3 Expressive theme\n- Seamless in-app updater",
+              "tag_name": "v1.2.1",
+              "name": "FT Cloud v1.2.1",
+              "body": "### What's New\n- Private & Public GitHub repo updater support",
               "assets": [
                 {
-                  "name": "FTCloud-v1.1.0-debug.apk",
-                  "browser_download_url": "https://github.com/ft-sinan/FT-cloud/releases/download/v1.1.0/FTCloud-v1.1.0-debug.apk",
+                  "name": "FTCloud-v1.2.1-debug.apk",
+                  "url": "https://api.github.com/repos/ft-sinan/FT-cloud/releases/assets/101",
+                  "browser_download_url": "https://github.com/ft-sinan/FT-cloud/releases/download/v1.2.1/FTCloud-v1.2.1-debug.apk",
                   "size": 18200000
                 },
                 {
-                  "name": "FTCloud-v1.1.0.apk",
-                  "browser_download_url": "https://github.com/ft-sinan/FT-cloud/releases/download/v1.1.0/FTCloud-v1.1.0.apk",
+                  "name": "FTCloud-v1.2.1.apk",
+                  "url": "https://api.github.com/repos/ft-sinan/FT-cloud/releases/assets/102",
+                  "browser_download_url": "https://github.com/ft-sinan/FT-cloud/releases/download/v1.2.1/FTCloud-v1.2.1.apk",
                   "size": 15400000
                 },
                 {
-                  "name": "FTCloud-v1.1.0.apk.sha256",
-                  "browser_download_url": "https://github.com/ft-sinan/FT-cloud/releases/download/v1.1.0/FTCloud-v1.1.0.apk.sha256",
+                  "name": "FTCloud-v1.2.1.apk.sha256",
+                  "url": "https://api.github.com/repos/ft-sinan/FT-cloud/releases/assets/103",
+                  "browser_download_url": "https://github.com/ft-sinan/FT-cloud/releases/download/v1.2.1/FTCloud-v1.2.1.apk.sha256",
                   "size": 92
                 }
               ]
@@ -67,16 +74,60 @@ class AppUpdateManagerTest {
         """.trimIndent()
 
         val release = AppUpdateManager.parseReleaseJson(sampleJson)
-        assertEquals("1.1.0", release.versionName)
-        assertEquals("v1.1.0", release.tagName)
-        assertEquals("FT Cloud v1.1.0 — Orion Expressive & In-App Updater", release.name)
-        assertEquals("FTCloud-v1.1.0.apk", release.apkName)
-        assertEquals(15_400_000L, release.apkSizeBytes)
-        assertEquals(
-            "https://github.com/ft-sinan/FT-cloud/releases/download/v1.1.0/FTCloud-v1.1.0.apk.sha256",
-            release.checksumDownloadUrl,
-        )
-        assertTrue(release.notes.contains("Orion Material 3 Expressive"))
+        assertEquals("1.2.1", release.versionName)
+        assertEquals("FTCloud-v1.2.1.apk", release.apkName)
+        assertEquals("https://api.github.com/repos/ft-sinan/FT-cloud/releases/assets/102", release.apkApiUrl)
+        assertEquals("https://api.github.com/repos/ft-sinan/FT-cloud/releases/assets/103", release.checksumApiUrl)
+    }
+
+    @Test
+    fun `private repo HTTP 404 surfaces clear guidance and bearer token succeeds`() = runBlocking {
+        val apiServer = MockWebServer()
+        apiServer.start()
+        try {
+            // 1. Unauthenticated 404 -> actionable Private repository explanation
+            apiServer.enqueue(MockResponse().setResponseCode(404))
+            try {
+                AppUpdateManager.fetchLatestRelease(url = apiServer.url("/releases/latest").toString())
+                fail("Expected HTTP 404 error")
+            } catch (err: IllegalStateException) {
+                assertTrue(err.message.orEmpty().contains("Private"))
+                assertTrue(err.message.orEmpty().contains("Public"))
+            }
+            val unauthReq = apiServer.takeRequest()
+            assertNull(unauthReq.getHeader("Authorization"))
+
+            // 2. Authenticated with fine-grained token -> sends Bearer header and parses release
+            apiServer.enqueue(
+                MockResponse()
+                    .setResponseCode(200)
+                    .setBody(
+                        """
+                        {
+                          "tag_name": "v1.2.1",
+                          "name": "FT Cloud v1.2.1",
+                          "assets": [
+                            {
+                              "name": "FTCloud-v1.2.1.apk",
+                              "url": "${apiServer.url("/assets/102")}",
+                              "browser_download_url": "${apiServer.url("/download/FTCloud-v1.2.1.apk")}",
+                              "size": 4096
+                            }
+                          ]
+                        }
+                        """.trimIndent()
+                    )
+            )
+            val release = AppUpdateManager.fetchLatestRelease(
+                url = apiServer.url("/releases/latest").toString(),
+                githubToken = "github_pat_test123",
+            )
+            val authReq = apiServer.takeRequest()
+            assertEquals("Bearer github_pat_test123", authReq.getHeader("Authorization"))
+            assertEquals("1.2.1", release.versionName)
+        } finally {
+            apiServer.shutdown()
+        }
     }
 
     @Test

@@ -18,6 +18,7 @@ interface CredentialStore {
     val botsFlow: StateFlow<List<StoredBotToken>>
     val channelIdFlow: StateFlow<String>
     val channelTitleFlow: StateFlow<String>
+    val githubUpdateTokenFlow: StateFlow<String>
 
     fun getBots(): List<StoredBotToken>
     fun saveBots(bots: List<StoredBotToken>)
@@ -25,6 +26,9 @@ interface CredentialStore {
     fun getChannelId(): String
     fun getChannelTitle(): String
     fun saveChannel(channelId: String, channelTitle: String)
+
+    fun getGithubUpdateToken(): String
+    fun saveGithubUpdateToken(token: String)
 
     fun setVaultEncryptionKey(secretKey: SecretKey, passphraseRecordSaltB64: String, verifier: String)
     fun getVaultEncryptionKey(): SecretKey?
@@ -62,6 +66,9 @@ class AndroidKeystoreCredentialStore(context: Context) : CredentialStore {
     private val _channelTitleFlow = MutableStateFlow(prefs.getString(KEY_CHANNEL_TITLE, "").orEmpty())
     override val channelTitleFlow: StateFlow<String> = _channelTitleFlow.asStateFlow()
 
+    private val _githubUpdateTokenFlow = MutableStateFlow(prefs.getString(KEY_GITHUB_UPDATE_TOKEN, "").orEmpty())
+    override val githubUpdateTokenFlow: StateFlow<String> = _githubUpdateTokenFlow.asStateFlow()
+
     override fun getBots(): List<StoredBotToken> = _botsFlow.value
 
     override fun saveBots(bots: List<StoredBotToken>) {
@@ -81,6 +88,18 @@ class AndroidKeystoreCredentialStore(context: Context) : CredentialStore {
             .apply()
         _channelIdFlow.value = channelId.trim()
         _channelTitleFlow.value = channelTitle.trim()
+    }
+
+    override fun getGithubUpdateToken(): String = _githubUpdateTokenFlow.value
+
+    override fun saveGithubUpdateToken(token: String) {
+        val cleaned = token.trim()
+        if (cleaned.isEmpty()) {
+            prefs.edit().remove(KEY_GITHUB_UPDATE_TOKEN).apply()
+        } else {
+            prefs.edit().putString(KEY_GITHUB_UPDATE_TOKEN, cleaned).apply()
+        }
+        _githubUpdateTokenFlow.value = cleaned
     }
 
     override fun setVaultEncryptionKey(
@@ -117,7 +136,11 @@ class AndroidKeystoreCredentialStore(context: Context) : CredentialStore {
     }
 
     override fun clearAll() {
+        val preservedGhToken = _githubUpdateTokenFlow.value
         prefs.edit().clear().apply()
+        if (preservedGhToken.isNotBlank()) {
+            prefs.edit().putString(KEY_GITHUB_UPDATE_TOKEN, preservedGhToken).apply()
+        }
         _botsFlow.value = emptyList()
         _channelIdFlow.value = ""
         _channelTitleFlow.value = ""
@@ -136,6 +159,7 @@ class AndroidKeystoreCredentialStore(context: Context) : CredentialStore {
         private const val KEY_VAULT_SECRET_B64 = "vault_secret_b64"
         private const val KEY_VAULT_SALT_B64 = "vault_salt_b64"
         private const val KEY_VAULT_VERIFIER = "vault_verifier"
+        private const val KEY_GITHUB_UPDATE_TOKEN = "github_update_token"
     }
 }
 
@@ -148,6 +172,9 @@ class InMemoryCredentialStore : CredentialStore {
 
     private val _channelTitleFlow = MutableStateFlow("")
     override val channelTitleFlow: StateFlow<String> = _channelTitleFlow.asStateFlow()
+
+    private val _githubUpdateTokenFlow = MutableStateFlow("")
+    override val githubUpdateTokenFlow: StateFlow<String> = _githubUpdateTokenFlow.asStateFlow()
 
     private var secretKey: SecretKey? = null
     private var saltB64: String? = null
@@ -166,6 +193,12 @@ class InMemoryCredentialStore : CredentialStore {
     override fun saveChannel(channelId: String, channelTitle: String) {
         _channelIdFlow.value = channelId.trim()
         _channelTitleFlow.value = channelTitle.trim()
+    }
+
+    override fun getGithubUpdateToken(): String = _githubUpdateTokenFlow.value
+
+    override fun saveGithubUpdateToken(token: String) {
+        _githubUpdateTokenFlow.value = token.trim()
     }
 
     override fun setVaultEncryptionKey(
