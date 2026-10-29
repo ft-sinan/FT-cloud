@@ -283,7 +283,7 @@ class ChannelMediaImporter(
                     database.chunkDao().upsertChunks(associatedChunks)
                 }
             }
-            runCatching { manifestSync.pushManifestToChannel() }
+            syncManifestQuietly()
         }
 
         ChannelImportSummary(
@@ -434,7 +434,7 @@ class ChannelMediaImporter(
         }
 
         if (imported > 0) {
-            runCatching { manifestSync.pushManifestToChannel() }
+            syncManifestQuietly()
         }
 
         val turboBots = settingsRepository.getBotScratchChats().size
@@ -519,7 +519,7 @@ class ChannelMediaImporter(
                         status = "Paused at message #$cursorId ($imported media imported)",
                     )
                     if (unpushedImports > 0) {
-                        runCatching { manifestSync.pushManifestToChannel() }
+                        syncManifestQuietly()
                     }
                     return@withContext
                 }
@@ -623,12 +623,12 @@ class ChannelMediaImporter(
 
                 if (unpushedImports >= 50) {
                     unpushedImports = 0
-                    runCatching { manifestSync.pushManifestToChannel() }
+                    syncManifestQuietly()
                 }
             }
 
             if (unpushedImports > 0) {
-                runCatching { manifestSync.pushManifestToChannel() }
+                syncManifestQuietly()
             }
             settingsRepository.updateChannelScanState(
                 running = false,
@@ -639,7 +639,7 @@ class ChannelMediaImporter(
             )
         } catch (err: Throwable) {
             if (unpushedImports > 0) {
-                runCatching { manifestSync.pushManifestToChannel() }
+                syncManifestQuietly()
             }
             settingsRepository.updateChannelScanState(
                 running = false,
@@ -649,6 +649,14 @@ class ChannelMediaImporter(
                 status = "Scan paused at #$cursorId (${err.message ?: "interrupted"}). Tap Resume anytime.",
             )
             throw err
+        }
+    }
+
+    private suspend fun syncManifestQuietly() {
+        runCatching {
+            val prevMsgId = settingsRepository.getSnapshot().pinnedManifestMessageId
+            val newMsgId = manifestSync.pushAndPinManifest(previousManifestMessageId = prevMsgId)
+            settingsRepository.recordManifestSync(newMsgId)
         }
     }
 
