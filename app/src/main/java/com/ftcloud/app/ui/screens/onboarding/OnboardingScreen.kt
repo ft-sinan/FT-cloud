@@ -57,6 +57,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import com.ftcloud.app.core.model.CloudManifestEnvelope
 import com.ftcloud.app.di.FTCloudContainer
+import com.ftcloud.app.ui.components.FTCloudShieldMark
 import kotlinx.coroutines.launch
 
 @Composable
@@ -91,28 +92,15 @@ fun OnboardingScreen(
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    modifier = Modifier
-                        .size(54.dp)
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(MaterialTheme.colorScheme.primaryContainer),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        imageVector = Icons.Outlined.CloudUpload,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(30.dp),
-                    )
-                }
+                FTCloudShieldMark(size = 62.dp)
                 Spacer(Modifier.width(14.dp))
                 Column {
                     Text(
-                        text = "FT-Cloud",
-                        style = MaterialTheme.typography.headlineMedium,
+                        text = "FT Cloud",
+                        style = MaterialTheme.typography.displaySmall,
                     )
                     Text(
-                        text = "Unlimited personal drive powered by your Telegram Bot Swarm",
+                        text = "Unlimited personal vault drive powered by your Telegram Bot Swarm",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )

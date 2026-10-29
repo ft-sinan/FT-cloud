@@ -12,6 +12,9 @@ on:
       - master
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
@@ -20,13 +23,57 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@v4
         with:
           java-version: "17"
           distribution: "temurin"
+          cache: "gradle"
 
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
+      - name: Restore persistent fallback signing keystore
+        uses: actions/cache@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: ftcloud-signing-keystore-v1
+
+      - name: Configure APK signing credentials
+        shell: bash
+        env:
+          FTCLOUD_RELEASE_KEYSTORE_BASE64: ${{ secrets.FTCLOUD_RELEASE_KEYSTORE_BASE64 }}
+          FTCLOUD_RELEASE_STORE_PASSWORD: ${{ secrets.FTCLOUD_RELEASE_STORE_PASSWORD }}
+          FTCLOUD_RELEASE_KEY_ALIAS: ${{ secrets.FTCLOUD_RELEASE_KEY_ALIAS }}
+          FTCLOUD_RELEASE_KEY_PASSWORD: ${{ secrets.FTCLOUD_RELEASE_KEY_PASSWORD }}
+          MYVAULT_RELEASE_KEYSTORE_BASE64: ${{ secrets.MYVAULT_RELEASE_KEYSTORE_BASE64 }}
+          MYVAULT_RELEASE_STORE_PASSWORD: ${{ secrets.MYVAULT_RELEASE_STORE_PASSWORD }}
+          MYVAULT_RELEASE_KEY_ALIAS: ${{ secrets.MYVAULT_RELEASE_KEY_ALIAS }}
+          MYVAULT_RELEASE_KEY_PASSWORD: ${{ secrets.MYVAULT_RELEASE_KEY_PASSWORD }}
+          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
+          KEY_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          keystore_b64="${FTCLOUD_RELEASE_KEYSTORE_BASE64:-${MYVAULT_RELEASE_KEYSTORE_BASE64:-${SIGNING_KEY:-}}}"
+          if [[ -n "$keystore_b64" ]]; then
+            keystore_path="$RUNNER_TEMP/ftcloud-release.jks"
+            printf '%s' "$keystore_b64" | base64 --decode > "$keystore_path"
+            test -s "$keystore_path"
+            echo "FTCLOUD_RELEASE_STORE_FILE=$keystore_path" >> "$GITHUB_ENV"
+            echo "Using configured repository release keystore secret."
+          else
+            mkdir -p ~/.android
+            if [[ ! -s ~/.android/debug.keystore ]]; then
+              keytool -genkeypair -v \
+                -keystore ~/.android/debug.keystore \
+                -storepass android \
+                -alias androiddebugkey \
+                -keypass android \
+                -keyalg RSA \
+                -keysize 2048 \
+                -validity 10000 \
+                -dname "CN=FT Cloud,OU=Mobile,O=FT,C=IN"
+            fi
+            echo "Using persistent cached keystore (~/.android/debug.keystore) for consistent in-place APK updates."
+          fi
 
       - name: Make gradlew executable
         run: chmod +x gradlew
@@ -37,8 +84,18 @@ jobs:
           set -o pipefail
           ./gradlew testDebugUnitTest --stacktrace 2>&1 | tee -a gradle-ci.log
 
-      - name: Assemble Debug & Release APKs
+      - name: Assemble Debug & Signed Release APKs
         shell: bash
+        env:
+          FTCLOUD_RELEASE_STORE_PASSWORD: ${{ secrets.FTCLOUD_RELEASE_STORE_PASSWORD }}
+          FTCLOUD_RELEASE_KEY_ALIAS: ${{ secrets.FTCLOUD_RELEASE_KEY_ALIAS }}
+          FTCLOUD_RELEASE_KEY_PASSWORD: ${{ secrets.FTCLOUD_RELEASE_KEY_PASSWORD }}
+          MYVAULT_RELEASE_STORE_PASSWORD: ${{ secrets.MYVAULT_RELEASE_STORE_PASSWORD }}
+          MYVAULT_RELEASE_KEY_ALIAS: ${{ secrets.MYVAULT_RELEASE_KEY_ALIAS }}
+          MYVAULT_RELEASE_KEY_PASSWORD: ${{ secrets.MYVAULT_RELEASE_KEY_PASSWORD }}
+          KEY_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
           set -o pipefail
           ./gradlew assembleDebug assembleRelease --stacktrace 2>&1 | tee -a gradle-ci.log
@@ -63,14 +120,78 @@ jobs:
             done
           fi
 
+      - name: Prepare & Verify Signed Release APK + SHA-256 Sidecar
+        shell: bash
+        run: |
+          set -euo pipefail
+          app_version="$(grep -E 'versionName[[:space:]]*=' app/build.gradle.kts | head -1 | sed -E 's/.*"([^"]+)".*/\1/')"
+          release_tag="v${app_version}"
+          apk_name="FTCloud-${release_tag}.apk"
+
+          release_apk="$(find app/build/outputs/apk/release -maxdepth 1 -name '*.apk' ! -name '*-unsigned.apk' | head -n 1)"
+          test -n "$release_apk" && test -s "$release_apk"
+
+          mkdir -p release-assets
+          cp "$release_apk" "release-assets/${apk_name}"
+          (
+            cd release-assets
+            sha256sum "${apk_name}" > "${apk_name}.sha256"
+          )
+
+          apksigner_bin="$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -n 1)"
+          if [[ -n "$apksigner_bin" ]]; then
+            "$apksigner_bin" verify --print-certs "release-assets/${apk_name}"
+          fi
+
+          awk -v version="$app_version" '
+            $0 ~ "^## \\[" version "\\]" { capture=1; next }
+            capture && /^## \[/ { exit }
+            capture { print }
+          ' CHANGELOG.md > release-assets/release-notes.md
+          if [[ ! -s release-assets/release-notes.md ]]; then
+            printf 'FT Cloud %s\n' "$release_tag" > release-assets/release-notes.md
+          fi
+
+          echo "APP_VERSION=${app_version}" >> "$GITHUB_ENV"
+          echo "RELEASE_TAG=${release_tag}" >> "$GITHUB_ENV"
+          echo "APK_NAME=${apk_name}" >> "$GITHUB_ENV"
+
       - name: Upload Debug APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: FT-Cloud-Debug-APK
           path: app/build/outputs/apk/debug/*.apk
 
-      - name: Upload Release APK artifact
+      - name: Upload Signed Release APK & SHA-256 artifact
         uses: actions/upload-artifact@v4
         with:
           name: FT-Cloud-Release-APK
-          path: app/build/outputs/apk/release/*.apk
+          path: |
+            release-assets/*.apk
+            release-assets/*.sha256
+
+      - name: Publish GitHub Release for In-App Updater
+        if: github.event_name != 'pull_request'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" \
+              "release-assets/$APK_NAME" \
+              "release-assets/$APK_NAME.sha256" \
+              --clobber
+            gh release edit "$RELEASE_TAG" \
+              --title "FT Cloud $RELEASE_TAG" \
+              --notes-file release-assets/release-notes.md \
+              --latest
+          else
+            gh release create "$RELEASE_TAG" \
+              "release-assets/$APK_NAME" \
+              "release-assets/$APK_NAME.sha256" \
+              --target "${{ github.sha }}" \
+              --title "FT Cloud $RELEASE_TAG" \
+              --notes-file release-assets/release-notes.md \
+              --latest
+          fi

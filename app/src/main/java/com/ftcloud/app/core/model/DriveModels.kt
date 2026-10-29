@@ -149,10 +149,22 @@ enum class DriveViewMode {
 }
 
 enum class AppThemeMode(val label: String) {
-    SYSTEM("System Default"),
+    SYSTEM("System"),
     LIGHT("Light"),
     DARK("Dark"),
-    AMOLED("AMOLED Pure Black"),
+    AMOLED("OLED Black"),
+}
+
+enum class AccentColor(val label: String) {
+    ORION("Orion"),
+    TEAL("Vault Teal"),
+    NAVY("Navy"),
+    EMERALD("Emerald"),
+    INDIGO("Indigo"),
+    OCEAN("Ocean"),
+    GRAPE("Grape"),
+    COCOA("Cocoa"),
+    SLATE("Slate"),
 }
 
 @Serializable
@@ -233,7 +245,13 @@ data class AppSettings(
     val channelTitle: String = "",
     val botCount: Int = 0,
     val themeMode: AppThemeMode = AppThemeMode.SYSTEM,
-    val dynamicColor: Boolean = true,
+    val accentColor: AccentColor = AccentColor.ORION,
+    val dynamicColor: Boolean = false,
+    val hapticsEnabled: Boolean = true,
+    val reduceAnimations: Boolean = false,
+    val glassBottomBar: Boolean = true,
+    val compactMode: Boolean = false,
+    val lastUpdateCheckAt: Long = 0L,
     val viewMode: DriveViewMode = DriveViewMode.LIST,
     val sortOption: SortOption = SortOption.DATE_MODIFIED,
     val sortDirection: SortDirection = SortDirection.DESC,

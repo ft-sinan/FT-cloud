@@ -10,6 +10,7 @@ import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.ftcloud.app.core.crypto.CredentialStore
+import com.ftcloud.app.core.model.AccentColor
 import com.ftcloud.app.core.model.AppSettings
 import com.ftcloud.app.core.model.AppThemeMode
 import com.ftcloud.app.core.model.BackupFolderConfig
@@ -57,7 +58,15 @@ class SettingsRepository(
             themeMode = prefs[KEY_THEME_MODE]
                 ?.let { runCatching { AppThemeMode.valueOf(it) }.getOrNull() }
                 ?: AppThemeMode.SYSTEM,
-            dynamicColor = prefs[KEY_DYNAMIC_COLOR] ?: true,
+            accentColor = prefs[KEY_ACCENT_COLOR]
+                ?.let { runCatching { AccentColor.valueOf(it) }.getOrNull() }
+                ?: AccentColor.ORION,
+            dynamicColor = prefs[KEY_DYNAMIC_COLOR] ?: false,
+            hapticsEnabled = prefs[KEY_HAPTICS_ENABLED] ?: true,
+            reduceAnimations = prefs[KEY_REDUCE_ANIMATIONS] ?: false,
+            glassBottomBar = prefs[KEY_GLASS_BOTTOM_BAR] ?: true,
+            compactMode = prefs[KEY_COMPACT_MODE] ?: false,
+            lastUpdateCheckAt = prefs[KEY_LAST_UPDATE_CHECK_AT] ?: 0L,
             viewMode = prefs[KEY_VIEW_MODE]
                 ?.let { runCatching { DriveViewMode.valueOf(it) }.getOrNull() }
                 ?: DriveViewMode.LIST,
@@ -98,8 +107,35 @@ class SettingsRepository(
         dataStore.edit { it[KEY_THEME_MODE] = mode.name }
     }
 
+    suspend fun selectAccentColor(accent: AccentColor) {
+        dataStore.edit {
+            it[KEY_ACCENT_COLOR] = accent.name
+            it[KEY_DYNAMIC_COLOR] = false
+        }
+    }
+
     suspend fun setDynamicColor(enabled: Boolean) {
         dataStore.edit { it[KEY_DYNAMIC_COLOR] = enabled }
+    }
+
+    suspend fun setHapticsEnabled(enabled: Boolean) {
+        dataStore.edit { it[KEY_HAPTICS_ENABLED] = enabled }
+    }
+
+    suspend fun setReduceAnimations(enabled: Boolean) {
+        dataStore.edit { it[KEY_REDUCE_ANIMATIONS] = enabled }
+    }
+
+    suspend fun setGlassBottomBar(enabled: Boolean) {
+        dataStore.edit { it[KEY_GLASS_BOTTOM_BAR] = enabled }
+    }
+
+    suspend fun setCompactMode(enabled: Boolean) {
+        dataStore.edit { it[KEY_COMPACT_MODE] = enabled }
+    }
+
+    suspend fun markUpdateChecked(checkedAtMs: Long = System.currentTimeMillis()) {
+        dataStore.edit { it[KEY_LAST_UPDATE_CHECK_AT] = checkedAtMs }
     }
 
     suspend fun setViewMode(mode: DriveViewMode) {
@@ -263,7 +299,13 @@ class SettingsRepository(
 
     companion object {
         private val KEY_THEME_MODE = stringPreferencesKey("theme_mode")
+        private val KEY_ACCENT_COLOR = stringPreferencesKey("accent_color")
         private val KEY_DYNAMIC_COLOR = booleanPreferencesKey("dynamic_color")
+        private val KEY_HAPTICS_ENABLED = booleanPreferencesKey("haptics_enabled")
+        private val KEY_REDUCE_ANIMATIONS = booleanPreferencesKey("reduce_animations")
+        private val KEY_GLASS_BOTTOM_BAR = booleanPreferencesKey("glass_bottom_bar")
+        private val KEY_COMPACT_MODE = booleanPreferencesKey("compact_mode")
+        private val KEY_LAST_UPDATE_CHECK_AT = longPreferencesKey("last_update_check_at")
         private val KEY_VIEW_MODE = stringPreferencesKey("view_mode")
         private val KEY_SORT_OPTION = stringPreferencesKey("sort_option")
         private val KEY_SORT_DIRECTION = stringPreferencesKey("sort_direction")

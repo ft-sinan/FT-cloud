@@ -1,11 +1,33 @@
 package com.ftcloud.app.ui.navigation
 
 import android.net.Uri
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkHorizontally
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Backup
 import androidx.compose.material.icons.filled.Cloud
@@ -21,17 +43,29 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Icon
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
@@ -41,9 +75,15 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.ftcloud.app.BuildConfig
 import com.ftcloud.app.core.model.AppSettings
+import com.ftcloud.app.core.model.FormatUtils
 import com.ftcloud.app.core.model.TransferStatus
+import com.ftcloud.app.core.update.AppUpdateManager
+import com.ftcloud.app.core.update.UpdateRelease
+import com.ftcloud.app.core.update.UpdateVersion
 import com.ftcloud.app.di.FTCloudContainer
+import com.ftcloud.app.ui.components.springPress
 import com.ftcloud.app.ui.screens.backup.BackupScreen
 import com.ftcloud.app.ui.screens.drive.DriveScreen
 import com.ftcloud.app.ui.screens.gallery.GalleryScreen
@@ -53,6 +93,8 @@ import com.ftcloud.app.ui.screens.settings.SettingsScreen
 import com.ftcloud.app.ui.screens.settings.StarredScreen
 import com.ftcloud.app.ui.screens.settings.TrashScreen
 import com.ftcloud.app.ui.screens.transfers.TransfersScreen
+import com.ftcloud.app.ui.theme.LocalAnimationsEnabled
+import com.ftcloud.app.ui.theme.LocalGlassBottomBar
 import kotlinx.coroutines.launch
 
 data class IncomingSharePayload(
@@ -68,7 +110,7 @@ private enum class TopDestination(
 ) {
     DRIVE("drive", "Drive", Icons.Filled.Cloud, Icons.Outlined.Cloud),
     PHOTOS("photos", "Photos", Icons.Filled.PhotoLibrary, Icons.Outlined.PhotoLibrary),
-    TRANSFERS("transfers", "Transfers", Icons.Filled.SwapVert, Icons.Outlined.SwapVert),
+    TRANSFERS("transfers", "Queue", Icons.Filled.SwapVert, Icons.Outlined.SwapVert),
     BACKUP("backup", "Backup", Icons.Filled.Backup, Icons.Outlined.Backup),
     SETTINGS("settings", "Settings", Icons.Filled.Settings, Icons.Outlined.Settings),
 }
@@ -92,10 +134,27 @@ fun FTCloudAppShell(
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentDestination = backStackEntry?.destination
     val scope = rememberCoroutineScope()
+    val glassBottomBar = LocalGlassBottomBar.current
 
     val transfers by container.driveRepository.observeTransfers().collectAsState(initial = emptyList())
     val activeTransferCount = transfers.count {
         it.status == TransferStatus.RUNNING || it.status == TransferStatus.QUEUED
+    }
+
+    var startupChecked by rememberSaveable { mutableStateOf(false) }
+    var startupUpdateRelease by remember { mutableStateOf<UpdateRelease?>(null) }
+
+    LaunchedEffect(settings.lastUpdateCheckAt) {
+        if (!startupChecked && System.currentTimeMillis() - settings.lastUpdateCheckAt >= 86_400_000L) {
+            startupChecked = true
+            container.settingsRepository.markUpdateChecked()
+            runCatching { AppUpdateManager.fetchLatestRelease() }
+                .onSuccess { release ->
+                    if (UpdateVersion.isNewer(release.versionName, BuildConfig.VERSION_NAME)) {
+                        startupUpdateRelease = release
+                    }
+                }
+        }
     }
 
     val topRoutes = TopDestination.entries.map { it.route }.toSet()
@@ -105,39 +164,49 @@ fun FTCloudAppShell(
         modifier = Modifier.fillMaxSize(),
         bottomBar = {
             if (showBottomBar) {
-                NavigationBar {
-                    TopDestination.entries.forEach { dest ->
-                        val selected = currentDestination?.hierarchy?.any { it.route == dest.route } == true
-                        NavigationBarItem(
-                            selected = selected,
-                            onClick = {
-                                navController.navigate(dest.route) {
-                                    popUpTo(navController.graph.findStartDestination().id) {
-                                        saveState = true
-                                    }
-                                    launchSingleTop = true
-                                    restoreState = true
-                                }
-                            },
-                            icon = {
-                                if (dest == TopDestination.TRANSFERS && activeTransferCount > 0) {
-                                    BadgedBox(
-                                        badge = { Badge { Text(activeTransferCount.toString()) } }
-                                    ) {
-                                        Icon(
-                                            imageVector = if (selected) dest.selectedIcon else dest.unselectedIcon,
-                                            contentDescription = dest.label,
-                                        )
-                                    }
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .navigationBarsPadding()
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .shadow(14.dp, CircleShape)
+                            .clip(CircleShape)
+                            .background(
+                                if (glassBottomBar) {
+                                    MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.93f)
                                 } else {
-                                    Icon(
-                                        imageVector = if (selected) dest.selectedIcon else dest.unselectedIcon,
-                                        contentDescription = dest.label,
-                                    )
+                                    MaterialTheme.colorScheme.surfaceContainer
                                 }
-                            },
-                            label = { Text(dest.label) },
-                        )
+                            )
+                            .padding(6.dp),
+                    ) {
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(3.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            TopDestination.entries.forEach { dest ->
+                                val selected = currentDestination?.hierarchy?.any { it.route == dest.route } == true
+                                FloatingDockItem(
+                                    icon = if (selected) dest.selectedIcon else dest.unselectedIcon,
+                                    label = dest.label,
+                                    selected = selected,
+                                    badgeCount = if (dest == TopDestination.TRANSFERS) activeTransferCount else 0,
+                                    onClick = {
+                                        navController.navigate(dest.route) {
+                                            popUpTo(navController.graph.findStartDestination().id) {
+                                                saveState = true
+                                            }
+                                            launchSingleTop = true
+                                            restoreState = true
+                                        }
+                                    },
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -222,10 +291,51 @@ fun FTCloudAppShell(
         }
     }
 
+    val availableRelease = startupUpdateRelease
+    if (availableRelease != null) {
+        AlertDialog(
+            onDismissRequest = { startupUpdateRelease = null },
+            title = { Text("Update Available: ${availableRelease.tagName}") },
+            text = {
+                Column {
+                    Text(
+                        "${availableRelease.name} (${FormatUtils.formatBytes(availableRelease.apkSizeBytes)}) is ready to install.",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    if (availableRelease.notes.isNotBlank()) {
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            availableRelease.notes.take(400),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    startupUpdateRelease = null
+                    navController.navigate(TopDestination.SETTINGS.route) {
+                        popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+                        launchSingleTop = true
+                        restoreState = true
+                    }
+                }) {
+                    Text("Open Updater")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { startupUpdateRelease = null }) {
+                    Text("Later")
+                }
+            }
+        )
+    }
+
     if (pendingShare != null && (pendingShare.uris.isNotEmpty() || !pendingShare.sharedText.isNullOrBlank())) {
         AlertDialog(
             onDismissRequest = onClearPendingShare,
-            title = { Text("Upload Shared Content to FT-Cloud?") },
+            title = { Text("Upload Shared Content to FT Cloud?") },
             text = {
                 Column {
                     if (pendingShare.uris.isNotEmpty()) {
@@ -267,5 +377,104 @@ fun FTCloudAppShell(
                 }
             }
         )
+    }
+}
+
+@Composable
+private fun FloatingDockItem(
+    icon: ImageVector,
+    label: String,
+    selected: Boolean,
+    badgeCount: Int,
+    onClick: () -> Unit,
+) {
+    val animationsEnabled = LocalAnimationsEnabled.current
+    val container by animateColorAsState(
+        targetValue = if (selected) {
+            MaterialTheme.colorScheme.secondaryContainer
+        } else {
+            Color.Transparent
+        },
+        animationSpec = if (animationsEnabled) tween(220) else snap(),
+        label = "dockContainer",
+    )
+    val contentColor by animateColorAsState(
+        targetValue = if (selected) {
+            MaterialTheme.colorScheme.onSecondaryContainer
+        } else {
+            MaterialTheme.colorScheme.onSurfaceVariant
+        },
+        animationSpec = if (animationsEnabled) tween(220) else snap(),
+        label = "dockContent",
+    )
+    val iconScale = remember { Animatable(1f) }
+    LaunchedEffect(selected, animationsEnabled) {
+        if (selected && animationsEnabled) {
+            iconScale.snapTo(0.68f)
+            iconScale.animateTo(1f, spring(dampingRatio = 0.52f, stiffness = 460f))
+        } else {
+            iconScale.snapTo(1f)
+        }
+    }
+
+    Box(
+        modifier = Modifier
+            .height(50.dp)
+            .clip(CircleShape)
+            .background(container)
+            .springPress(CircleShape, role = Role.Tab, onClickLabel = label, onClick = onClick)
+            .padding(horizontal = 11.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            val iconNode: @Composable () -> Unit = {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = label,
+                    tint = contentColor,
+                    modifier = Modifier
+                        .size(23.dp)
+                        .graphicsLayer {
+                            scaleX = iconScale.value
+                            scaleY = iconScale.value
+                        },
+                )
+            }
+            if (badgeCount > 0) {
+                BadgedBox(badge = { Badge { Text(badgeCount.toString()) } }) {
+                    iconNode()
+                }
+            } else {
+                iconNode()
+            }
+
+            AnimatedVisibility(
+                visible = selected,
+                enter = if (animationsEnabled) {
+                    expandHorizontally(spring(dampingRatio = 0.76f, stiffness = 380f)) +
+                        fadeIn(tween(160))
+                } else {
+                    EnterTransition.None
+                },
+                exit = if (animationsEnabled) {
+                    shrinkHorizontally(tween(140)) + fadeOut(tween(100))
+                } else {
+                    ExitTransition.None
+                },
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        text = label,
+                        style = MaterialTheme.typography.labelLarge,
+                        color = contentColor,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.widthIn(max = 82.dp),
+                    )
+                }
+            }
+        }
     }
 }

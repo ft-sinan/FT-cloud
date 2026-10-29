@@ -55,6 +55,8 @@ import com.ftcloud.app.core.model.TransferDirection
 import com.ftcloud.app.core.model.TransferStatus
 import com.ftcloud.app.core.model.TransferTask
 import com.ftcloud.app.di.FTCloudContainer
+import com.ftcloud.app.ui.components.ExpressiveTopBar
+import com.ftcloud.app.ui.components.HeaderCircleButton
 import kotlinx.coroutines.launch
 
 private enum class TransferTab(val label: String) {
@@ -89,17 +91,24 @@ fun TransfersScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text("Transfer Manager") },
-                actions = {
+            ExpressiveTopBar(
+                content = {
+                    Text(
+                        text = "Transfer Queue",
+                        style = MaterialTheme.typography.titleLarge,
+                        maxLines = 1,
+                        modifier = Modifier.weight(1f),
+                    )
+                },
+                trailing = {
                     if (allTransfers.any { it.status in setOf(TransferStatus.COMPLETED, TransferStatus.CANCELLED) }) {
-                        TextButton(onClick = { scope.launch { repo.clearCompletedTransfers() } }) {
-                            Icon(Icons.Outlined.CleaningServices, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(4.dp))
-                            Text("Clear done")
-                        }
+                        HeaderCircleButton(
+                            icon = Icons.Outlined.CleaningServices,
+                            contentDescription = "Clear finished transfers",
+                            onClick = { scope.launch { repo.clearCompletedTransfers() } },
+                        )
                     }
-                }
+                },
             )
         }
     ) { innerPadding ->

@@ -65,6 +65,8 @@ import com.ftcloud.app.core.model.DriveFile
 import com.ftcloud.app.core.model.FileCategory
 import com.ftcloud.app.core.model.FormatUtils
 import com.ftcloud.app.di.FTCloudContainer
+import com.ftcloud.app.ui.components.ExpressiveTopBar
+import com.ftcloud.app.ui.components.HeaderCircleButton
 import kotlinx.coroutines.launch
 
 private enum class GalleryMediaFilter(val label: String) {
@@ -134,13 +136,20 @@ fun GalleryScreen(
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
-            TopAppBar(
-                title = { Text("Photos & Videos") },
-                actions = {
+            ExpressiveTopBar(
+                content = {
+                    Text(
+                        text = "Photos & Videos",
+                        style = MaterialTheme.typography.titleLarge,
+                        maxLines = 1,
+                        modifier = Modifier.weight(1f),
+                    )
+                },
+                pillActions = {
                     AssistChip(
                         onClick = onNavigateToBackup,
                         label = {
-                            Text(if (settings.autoBackupEnabled) "Auto-backup On" else "Auto-backup Off")
+                            Text(if (settings.autoBackupEnabled) "Sync On" else "Sync Off")
                         },
                         leadingIcon = {
                             Icon(
@@ -149,19 +158,22 @@ fun GalleryScreen(
                                 modifier = Modifier.size(16.dp),
                             )
                         },
-                        modifier = Modifier.padding(end = 4.dp),
                     )
-                    IconButton(onClick = {
-                        val nextCols = when (columns) {
-                            2 -> 3
-                            3 -> 4
-                            else -> 2
-                        }
-                        scope.launch { container.settingsRepository.setGalleryColumns(nextCols) }
-                    }) {
-                        Icon(Icons.Outlined.GridOn, contentDescription = "Change grid size")
-                    }
-                }
+                },
+                trailing = {
+                    HeaderCircleButton(
+                        icon = Icons.Outlined.GridOn,
+                        contentDescription = "Change grid size",
+                        onClick = {
+                            val nextCols = when (columns) {
+                                2 -> 3
+                                3 -> 4
+                                else -> 2
+                            }
+                            scope.launch { container.settingsRepository.setGalleryColumns(nextCols) }
+                        },
+                    )
+                },
             )
         },
         floatingActionButton = {

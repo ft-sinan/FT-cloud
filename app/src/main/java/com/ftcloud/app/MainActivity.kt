@@ -36,6 +36,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.content.IntentCompat
 import androidx.fragment.app.FragmentActivity
 import com.ftcloud.app.core.model.AppSettings
+import com.ftcloud.app.ui.components.FTCloudShieldMark
 import com.ftcloud.app.ui.navigation.FTCloudAppShell
 import com.ftcloud.app.ui.navigation.IncomingSharePayload
 import com.ftcloud.app.ui.theme.FTCloudTheme
@@ -83,7 +84,12 @@ class MainActivity : FragmentActivity() {
 
             FTCloudTheme(
                 themeMode = settings.themeMode,
+                accentColor = settings.accentColor,
                 dynamicColor = settings.dynamicColor,
+                hapticsEnabled = settings.hapticsEnabled,
+                reduceAnimations = settings.reduceAnimations,
+                glassBottomBar = settings.glassBottomBar,
+                compactMode = settings.compactMode,
             ) {
                 if (requiresUnlock) {
                     Surface(
@@ -97,14 +103,9 @@ class MainActivity : FragmentActivity() {
                             horizontalAlignment = Alignment.CenterHorizontally,
                             verticalArrangement = Arrangement.Center,
                         ) {
-                            Icon(
-                                imageVector = Icons.Outlined.Fingerprint,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(72.dp),
-                            )
-                            Spacer(Modifier.height(16.dp))
-                            Text("FT-Cloud is Locked", style = MaterialTheme.typography.headlineMedium)
+                            FTCloudShieldMark(size = 80.dp)
+                            Spacer(Modifier.height(20.dp))
+                            Text("FT Cloud is Locked", style = MaterialTheme.typography.headlineMedium)
                             Spacer(Modifier.height(8.dp))
                             Text(
                                 "Authenticate with biometrics or your device screen lock to access your cloud vault.",

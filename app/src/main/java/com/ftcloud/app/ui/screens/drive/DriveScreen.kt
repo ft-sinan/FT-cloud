@@ -85,6 +85,8 @@ import com.ftcloud.app.ui.components.MoveDestinationSheet
 import com.ftcloud.app.ui.components.QuickNoteDialog
 import com.ftcloud.app.ui.components.SingleInputDialog
 import com.ftcloud.app.ui.components.StorageOverviewCard
+import com.ftcloud.app.ui.components.ExpressiveTopBar
+import com.ftcloud.app.ui.components.HeaderCircleButton
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -229,31 +231,34 @@ fun DriveScreen(
                     }
                 )
             } else {
-                TopAppBar(
-                    title = {
+                ExpressiveTopBar(
+                    content = {
                         Text(
-                            text = breadcrumbs.lastOrNull()?.name ?: "FT-Cloud Drive",
+                            text = breadcrumbs.lastOrNull()?.name ?: "FT Cloud",
                             style = MaterialTheme.typography.titleLarge,
+                            maxLines = 1,
+                            modifier = Modifier.weight(1f),
                         )
                     },
-                    actions = {
-                        IconButton(onClick = {
-                            val next = if (settings.viewMode == DriveViewMode.LIST) DriveViewMode.GRID else DriveViewMode.LIST
-                            scope.launch { container.settingsRepository.setViewMode(next) }
-                        }) {
-                            Icon(
-                                imageVector = if (settings.viewMode == DriveViewMode.LIST) {
-                                    Icons.Outlined.GridView
-                                } else {
-                                    Icons.AutoMirrored.Outlined.ViewList
-                                },
-                                contentDescription = "Toggle grid or list view",
-                            )
-                        }
+                    trailing = {
+                        HeaderCircleButton(
+                            icon = if (settings.viewMode == DriveViewMode.LIST) {
+                                Icons.Outlined.GridView
+                            } else {
+                                Icons.AutoMirrored.Outlined.ViewList
+                            },
+                            contentDescription = "Toggle grid or list view",
+                            onClick = {
+                                val next = if (settings.viewMode == DriveViewMode.LIST) DriveViewMode.GRID else DriveViewMode.LIST
+                                scope.launch { container.settingsRepository.setViewMode(next) }
+                            },
+                        )
                         Box {
-                            IconButton(onClick = { sortMenuExpanded = true }) {
-                                Icon(Icons.AutoMirrored.Outlined.Sort, contentDescription = "Sort")
-                            }
+                            HeaderCircleButton(
+                                icon = Icons.AutoMirrored.Outlined.Sort,
+                                contentDescription = "Sort",
+                                onClick = { sortMenuExpanded = true },
+                            )
                             DropdownMenu(
                                 expanded = sortMenuExpanded,
                                 onDismissRequest = { sortMenuExpanded = false },
@@ -281,7 +286,7 @@ fun DriveScreen(
                                 }
                             }
                         }
-                    }
+                    },
                 )
             }
         },
@@ -314,7 +319,7 @@ fun DriveScreen(
                     }
                 },
                 singleLine = true,
-                shape = RoundedCornerShape(16.dp),
+                shape = RoundedCornerShape(50),
                 modifier = Modifier.fillMaxWidth(),
             )
 

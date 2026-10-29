@@ -56,6 +56,7 @@ import com.ftcloud.app.core.model.DriveStats
 import com.ftcloud.app.core.model.FormatUtils
 import com.ftcloud.app.core.sync.BackupScheduler
 import com.ftcloud.app.di.FTCloudContainer
+import com.ftcloud.app.ui.components.ExpressiveHeroHeader
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -111,20 +112,26 @@ fun BackupScreen(
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
-        topBar = {
-            TopAppBar(title = { Text("Automatic Backup") })
-        }
     ) { innerPadding ->
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(innerPadding),
-            contentPadding = PaddingValues(16.dp),
+                .padding(bottom = innerPadding.calculateBottomPadding()),
+            contentPadding = PaddingValues(bottom = 16.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             item {
+                ExpressiveHeroHeader(
+                    title = "Auto Backup",
+                    subtitle = "Original-quality camera roll & folder sync to your private Telegram vault.",
+                    icon = Icons.Outlined.Backup,
+                )
+            }
+
+            item {
                 Card(
-                    shape = RoundedCornerShape(20.dp),
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                    shape = RoundedCornerShape(24.dp),
                     colors = CardDefaults.cardColors(
                         containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.65f),
                     ),
@@ -213,7 +220,10 @@ fun BackupScreen(
             }
 
             item {
-                Card(shape = RoundedCornerShape(16.dp)) {
+                Card(
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                    shape = RoundedCornerShape(20.dp),
+                ) {
                     Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text("Media & Network Rules", style = MaterialTheme.typography.titleMedium)
 
@@ -274,7 +284,9 @@ fun BackupScreen(
 
             item {
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
@@ -293,11 +305,15 @@ fun BackupScreen(
                         text = "No extra folders added yet. Add Downloads, Documents, or Notes folders to mirror them into /Auto Backup.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 16.dp),
                     )
                 }
             } else {
                 items(settings.backupFolders, key = { it.uriString }) { folder ->
-                    Card(shape = RoundedCornerShape(14.dp)) {
+                    Card(
+                        modifier = Modifier.padding(horizontal = 16.dp),
+                        shape = RoundedCornerShape(16.dp),
+                    ) {
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()

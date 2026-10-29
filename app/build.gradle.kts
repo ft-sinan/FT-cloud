@@ -12,12 +12,20 @@ android {
 
     signingConfigs {
         create("release") {
-            val keystorePath = System.getenv("KEYSTORE_PATH")
+            val keystorePath = System.getenv("FTCLOUD_RELEASE_STORE_FILE")
+                ?: System.getenv("MYVAULT_RELEASE_STORE_FILE")
+                ?: System.getenv("KEYSTORE_PATH")
             if (!keystorePath.isNullOrBlank() && file(keystorePath).exists()) {
                 storeFile = file(keystorePath)
-                storePassword = System.getenv("KEY_STORE_PASSWORD")
-                keyAlias = System.getenv("KEY_ALIAS")
-                keyPassword = System.getenv("KEY_PASSWORD")
+                storePassword = System.getenv("FTCLOUD_RELEASE_STORE_PASSWORD")
+                    ?: System.getenv("MYVAULT_RELEASE_STORE_PASSWORD")
+                    ?: System.getenv("KEY_STORE_PASSWORD")
+                keyAlias = System.getenv("FTCLOUD_RELEASE_KEY_ALIAS")
+                    ?: System.getenv("MYVAULT_RELEASE_KEY_ALIAS")
+                    ?: System.getenv("KEY_ALIAS")
+                keyPassword = System.getenv("FTCLOUD_RELEASE_KEY_PASSWORD")
+                    ?: System.getenv("MYVAULT_RELEASE_KEY_PASSWORD")
+                    ?: System.getenv("KEY_PASSWORD")
             }
         }
     }
@@ -26,8 +34,8 @@ android {
         applicationId = "com.ftcloud.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "1.1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {

@@ -1,13 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- FT Franchise adaptive-icon background: deep vault green with soft lime orbit -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
     <path
-        android:fillColor="#0A2540"
-        android:pathData="M0,0h108v108h-108z" />
+        android:fillColor="#173F35"
+        android:pathData="M0,0 L108,0 L108,108 L0,108 Z" />
     <path
-        android:fillColor="#133B6E"
-        android:pathData="M0,72 Q54,44 108,78 L108,108 L0,108 Z" />
+        android:fillColor="#24C8F169"
+        android:pathData="M88,15 m-26,0 a26,26 0 1,0 52,0 a26,26 0 1,0 -52,0" />
 </vector>
