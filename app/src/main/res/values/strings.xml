@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">FT-Cloud</string>
+    <string name="app_name">FT Cloud</string>
     <string name="notif_channel_transfers">Cloud Transfers</string>
     <string name="notif_channel_backup">Automatic Backup</string>
 </resources>

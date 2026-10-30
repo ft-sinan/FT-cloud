@@ -102,6 +102,7 @@ import com.ftcloud.app.core.model.FormatUtils
 import com.ftcloud.app.core.pairing.DevicePairingManager
 import com.ftcloud.app.core.pairing.GeneratedPairingKit
 import com.ftcloud.app.core.sync.ChannelScanScheduler
+import com.ftcloud.app.core.update.ApkInstallCompatibility
 import com.ftcloud.app.core.update.AppUpdateManager
 import com.ftcloud.app.core.update.UpdateRelease
 import com.ftcloud.app.core.update.UpdateVersion
@@ -124,6 +125,12 @@ private sealed interface UpdateStatus {
     data class Downloading(val release: UpdateRelease, val progress: Int?) : UpdateStatus
     data class Verifying(val release: UpdateRelease) : UpdateStatus
     data class NeedsInstallPermission(val release: UpdateRelease) : UpdateStatus
+    data class SignatureConflict(
+        val release: UpdateRelease,
+        val targetPackage: String,
+        val runningDebugSideBySide: Boolean,
+        val savedDownloadsPath: String?,
+    ) : UpdateStatus
     data class Failed(val errorText: String) : UpdateStatus
 }
 
@@ -200,6 +207,30 @@ fun SettingsScreen(
 
     fun installDownloadedUpdate(release: UpdateRelease) {
         val apk = downloadedUpdateApk ?: return
+        when (val compat = AppUpdateManager.inspectInstallCompatibility(context, apk)) {
+            is ApkInstallCompatibility.SignatureConflict -> {
+                scope.launch {
+                    runCatching { container.driveRepository.syncManifestNow() }
+                    val savedPath = runCatching {
+                        AppUpdateManager.saveApkToDownloads(context, apk, release.apkName)
+                    }.getOrNull()
+                    updateStatus = UpdateStatus.SignatureConflict(
+                        release = release,
+                        targetPackage = compat.targetPackage,
+                        runningDebugSideBySide = compat.runningDifferentPackage,
+                        savedDownloadsPath = savedPath,
+                    )
+                }
+                return
+            }
+            is ApkInstallCompatibility.DowngradeConflict -> {
+                updateStatus = UpdateStatus.Failed(
+                    "Installed version code (${compat.installedVersionCode}) is newer than ${release.tagName} (${compat.archiveVersionCode})."
+                )
+                return
+            }
+            ApkInstallCompatibility.Compatible -> Unit
+        }
         if (!AppUpdateManager.canInstallPackages(context)) {
             updateStatus = UpdateStatus.NeedsInstallPermission(release)
             return
@@ -1751,6 +1782,35 @@ private fun AppUpdateCard(
                             modifier = Modifier.weight(1f),
                         ) {
                             Text("Install Now")
+                        }
+                    }
+                }
+
+                is UpdateStatus.SignatureConflict -> {
+                    Text(
+                        text = if (status.runningDebugSideBySide) {
+                            "An older FT Cloud build (${status.targetPackage}) with a different signing key is installed alongside this Debug app. Tap 'Remove Old Package' once, then tap 'Install Now' — all future updates will install in-place!"
+                        } else {
+                            val dlNote = status.savedDownloadsPath?.let { " Saved verified APK to $it." }.orEmpty()
+                            "Your current install was signed with an earlier key (e.g. v1.0 or Android Studio), so Android requires a one-time clean install before seamless in-place updates work.$dlNote Your Cloud Index is already synced in Telegram!"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilledTonalButton(
+                            onClick = { AppUpdateManager.requestUninstallPackage(context, status.targetPackage) },
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Text("Remove Old Package")
+                        }
+                        if (status.runningDebugSideBySide) {
+                            Button(
+                                onClick = { onDownload(status.release) },
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                Text("Install Now")
+                            }
                         }
                     }
                 }

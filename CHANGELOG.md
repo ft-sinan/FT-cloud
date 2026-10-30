@@ -2,6 +2,13 @@
 
 All notable changes to **FT Cloud** are documented in this file.
 
+## [1.2.2] - 2026-10-29
+
+### Improved
+- **Certificate Conflict Pre-Check & One-Time Migration Helper**:
+  - `AppUpdateManager.inspectInstallCompatibility()` inspects the X.509 signing certificate of any installed `com.ftcloud.app` against the downloaded release APK *before* launching Android's package installer, catching `v1.0` / Android Studio / `.debug` signature conflicts cleanly instead of failing with Android's generic *"package conflicts with an existing package"* screen.
+  - Automatically syncs your Pinned Cloud Manifest, saves the verified APK to `Downloads`, and provides a one-tap **Remove Old Package** action; separated launcher labels (`FT Cloud` vs `FT Cloud (Debug)`) and added `scripts/generate-release-keystore.sh` for permanent secret setup.
+
 ## [1.2.1] - 2026-10-29
 
 ### Fixed & Improved

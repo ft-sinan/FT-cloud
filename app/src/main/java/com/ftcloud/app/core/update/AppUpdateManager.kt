@@ -1,9 +1,14 @@
 package com.ftcloud.app.core.update
 
+import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageInfo
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
 import android.provider.Settings
 import androidx.core.content.FileProvider
 import kotlinx.coroutines.Dispatchers
@@ -62,6 +67,18 @@ data class UpdateRelease(
     val checksumDownloadUrl: String?,
     val checksumApiUrl: String? = null,
 )
+
+sealed interface ApkInstallCompatibility {
+    data object Compatible : ApkInstallCompatibility
+    data class SignatureConflict(
+        val targetPackage: String,
+        val runningDifferentPackage: Boolean,
+    ) : ApkInstallCompatibility
+    data class DowngradeConflict(
+        val installedVersionCode: Long,
+        val archiveVersionCode: Long,
+    ) : ApkInstallCompatibility
+}
 
 @Serializable
 internal data class GitHubReleaseDto(
@@ -269,6 +286,134 @@ object AppUpdateManager {
         }
         context.startActivity(intent)
     }
+
+    /**
+     * Pre-checks whether the downloaded APK's X.509 signing certificate matches any already-installed
+     * copy of `com.ftcloud.app` on the device, preventing Android's cryptic
+     * "App not installed as package conflicts with an existing package" error.
+     */
+    fun inspectInstallCompatibility(context: Context, apk: File): ApkInstallCompatibility {
+        val pm = context.packageManager
+        val archiveInfo = readArchivePackageInfo(pm, apk.absolutePath)
+            ?: return ApkInstallCompatibility.Compatible
+        val targetPkg = archiveInfo.packageName ?: return ApkInstallCompatibility.Compatible
+
+        val installedInfo = readInstalledPackageInfo(pm, targetPkg)
+            ?: return ApkInstallCompatibility.Compatible
+
+        val archiveSigners = extractSignerDigests(archiveInfo)
+        val installedSigners = extractSignerDigests(installedInfo)
+        if (archiveSigners.isNotEmpty() && installedSigners.isNotEmpty() &&
+            archiveSigners.intersect(installedSigners).isEmpty()
+        ) {
+            return ApkInstallCompatibility.SignatureConflict(
+                targetPackage = targetPkg,
+                runningDifferentPackage = context.packageName != targetPkg,
+            )
+        }
+
+        val installedCode = getVersionCodeCompat(installedInfo)
+        val archiveCode = getVersionCodeCompat(archiveInfo)
+        if (archiveCode in 1 until installedCode) {
+            return ApkInstallCompatibility.DowngradeConflict(
+                installedVersionCode = installedCode,
+                archiveVersionCode = archiveCode,
+            )
+        }
+
+        return ApkInstallCompatibility.Compatible
+    }
+
+    suspend fun saveApkToDownloads(context: Context, apk: File, fileName: String): String =
+        withContext(Dispatchers.IO) {
+            val cleanName = fileName.ifBlank { apk.name }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val resolver = context.contentResolver
+                val values = ContentValues().apply {
+                    put(MediaStore.Downloads.DISPLAY_NAME, cleanName)
+                    put(MediaStore.Downloads.MIME_TYPE, "application/vnd.android.package-archive")
+                    put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+                }
+                val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+                    ?: error("Could not save APK into Downloads")
+                resolver.openOutputStream(uri)?.use { out ->
+                    apk.inputStream().use { it.copyTo(out) }
+                } ?: error("Could not write APK into Downloads")
+                "Downloads/$cleanName"
+            } else {
+                val dir = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: context.filesDir
+                dir.mkdirs()
+                val dest = File(dir, cleanName)
+                apk.copyTo(dest, overwrite = true)
+                dest.absolutePath
+            }
+        }
+
+    fun requestUninstallPackage(context: Context, packageName: String) {
+        val intent = Intent(Intent.ACTION_DELETE, Uri.parse("package:$packageName")).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        context.startActivity(intent)
+    }
+
+    private fun readArchivePackageInfo(pm: PackageManager, path: String): PackageInfo? = runCatching {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            pm.getPackageArchiveInfo(
+                path,
+                PackageManager.PackageInfoFlags.of(PackageManager.GET_SIGNING_CERTIFICATES.toLong()),
+            )
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            @Suppress("DEPRECATION")
+            pm.getPackageArchiveInfo(path, PackageManager.GET_SIGNING_CERTIFICATES)
+        } else {
+            @Suppress("DEPRECATION")
+            pm.getPackageArchiveInfo(path, PackageManager.GET_SIGNATURES)
+        }
+    }.getOrNull()
+
+    private fun readInstalledPackageInfo(pm: PackageManager, pkg: String): PackageInfo? = runCatching {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            pm.getPackageInfo(
+                pkg,
+                PackageManager.PackageInfoFlags.of(PackageManager.GET_SIGNING_CERTIFICATES.toLong()),
+            )
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            @Suppress("DEPRECATION")
+            pm.getPackageInfo(pkg, PackageManager.GET_SIGNING_CERTIFICATES)
+        } else {
+            @Suppress("DEPRECATION")
+            pm.getPackageInfo(pkg, PackageManager.GET_SIGNATURES)
+        }
+    }.getOrNull()
+
+    private fun extractSignerDigests(info: PackageInfo): Set<String> {
+        val rawCerts: List<ByteArray> = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            val signingInfo = info.signingInfo
+            val signers = if (signingInfo == null) {
+                emptyArray()
+            } else if (signingInfo.hasMultipleSigners()) {
+                signingInfo.apkContentsSigners
+            } else {
+                signingInfo.signingCertificateHistory
+            }
+            signers?.map { it.toByteArray() }.orEmpty()
+        } else {
+            @Suppress("DEPRECATION")
+            info.signatures?.map { it.toByteArray() }.orEmpty()
+        }
+        return rawCerts.map { bytes ->
+            MessageDigest.getInstance("SHA-256").digest(bytes)
+                .joinToString("") { b -> "%02x".format(b) }
+        }.toSet()
+    }
+
+    private fun getVersionCodeCompat(info: PackageInfo): Long =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            info.longVersionCode
+        } else {
+            @Suppress("DEPRECATION")
+            info.versionCode.toLong()
+        }
 
     private fun fetchText(
         url: String,
