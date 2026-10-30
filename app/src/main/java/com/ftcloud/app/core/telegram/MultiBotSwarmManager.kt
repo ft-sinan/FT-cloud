@@ -41,6 +41,7 @@ class MultiBotSwarmManager(
         val cooldownUntilMs = AtomicLong(0L)
         val uploadedBytes = AtomicLong(0L)
         val downloadedBytes = AtomicLong(0L)
+        val completedOps = AtomicLong(0L)
         @Volatile var isHealthy: Boolean = true
         @Volatile var lastLatencyMs: Long? = null
         @Volatile var lastError: String? = null
@@ -50,6 +51,7 @@ class MultiBotSwarmManager(
     private val scratchChatIdByBotId = ConcurrentHashMap<String, String>()
     private val roundRobinCursor = AtomicInteger(0)
     private val selectionMutex = Mutex()
+    @Volatile var onScratchChatInvalidated: ((String) -> Unit)? = null
 
     private val _runtimeStatuses = MutableStateFlow<List<BotRuntimeStatus>>(emptyList())
     val runtimeStatuses: StateFlow<List<BotRuntimeStatus>> = _runtimeStatuses.asStateFlow()
@@ -69,13 +71,15 @@ class MultiBotSwarmManager(
                 username = bot.username,
                 displayName = bot.displayName,
                 maskedToken = FormatUtils.maskBotToken(bot.token),
-                isHealthy = m.isHealthy && cooldownRem == 0L,
+                isHealthy = m.isHealthy,
                 activeRequests = m.activeRequests.get(),
                 cooldownRemainingMs = cooldownRem,
                 uploadedBytes = m.uploadedBytes.get(),
                 downloadedBytes = m.downloadedBytes.get(),
                 lastLatencyMs = m.lastLatencyMs,
-                lastError = m.lastError,
+                lastError = if (cooldownRem == 0L && m.lastError?.startsWith("Rate limited") == true) null else m.lastError,
+                hasTurboDm = scratchChatIdByBotId.containsKey(bot.botId),
+                completedOps = m.completedOps.get(),
             )
         }
     }
@@ -88,6 +92,7 @@ class MultiBotSwarmManager(
         require(channelId.isNotBlank()) { "Channel ID cannot be empty." }
 
         val cleanedTokens = rawTokens
+            .flatMap { it.split('\n', '\r', ',', ';', ' ', '\t') }
             .map { it.trim() }
             .filter { it.isNotEmpty() }
             .distinct()
@@ -165,8 +170,22 @@ class MultiBotSwarmManager(
         )
         val updated = (credentialStore.getBots().filterNot { it.botId == botId } + stored)
         credentialStore.saveBots(updated)
+        // Propagate known private DM chat ID if user already activated /start on another bot
+        scratchChatIdByBotId.values.firstOrNull()?.let { knownUserDmId ->
+            scratchChatIdByBotId[botId] = knownUserDmId
+        }
         refreshStatusSnapshot()
         return stored
+    }
+
+    suspend fun addAndVerifyBots(rawInput: String): List<StoredBotToken> {
+        val tokens = rawInput
+            .split('\n', '\r', ',', ';', ' ', '\t')
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .distinct()
+        require(tokens.isNotEmpty()) { "Please paste at least one Bot Token." }
+        return tokens.map { token -> addAndVerifyBot(token) }
     }
 
     fun removeBot(botId: String) {
@@ -213,9 +232,7 @@ class MultiBotSwarmManager(
 
         var lastException: Throwable? = null
         repeat(maxAttempts) { attempt ->
-            val bot = acquireBestBot()
-            val metrics = metricsByBotId.computeIfAbsent(bot.botId) { MutableBotMetrics() }
-            metrics.activeRequests.incrementAndGet()
+            val (bot, metrics) = acquireBotSlot(preferScratchChat = false)
             refreshStatusSnapshot()
 
             try {
@@ -238,6 +255,7 @@ class MultiBotSwarmManager(
                 metrics.lastLatencyMs = System.currentTimeMillis() - startMs
                 metrics.lastError = null
                 metrics.uploadedBytes.addAndGet(payload.size.toLong())
+                metrics.completedOps.incrementAndGet()
 
                 return UploadedChunkResult(
                     messageId = message.messageId,
@@ -286,13 +304,33 @@ class MultiBotSwarmManager(
         val bots = credentialStore.getBots()
         require(bots.isNotEmpty()) { "No bots configured in FT-Cloud swarm." }
         val channelId = credentialStore.getChannelId()
+        val now = System.currentTimeMillis()
 
         val preferredBot = if (chunk.telegramFileId.isNotBlank()) {
             bots.firstOrNull { it.botId == chunk.uploaderBotId }
         } else {
             null
         }
-        if (preferredBot != null) {
+
+        val shouldOffloadToIdlePeer = if (preferredBot != null && bots.size > 1 && chunk.telegramMessageId > 0L) {
+            val prefMetrics = metricsByBotId.computeIfAbsent(preferredBot.botId) { MutableBotMetrics() }
+            val prefCoolingOrUnhealthy = !prefMetrics.isHealthy || prefMetrics.cooldownUntilMs.get() > now
+            val prefActive = prefMetrics.activeRequests.get()
+            val hasIdleTurboPeer = bots.any { peer ->
+                peer.botId != preferredBot.botId &&
+                    scratchChatIdByBotId.containsKey(peer.botId) &&
+                    metricsByBotId[peer.botId]?.let { it.isHealthy && it.cooldownUntilMs.get() <= now && it.activeRequests.get() == 0 } != false
+            }
+            val hasIdleHealthyPeer = bots.any { peer ->
+                peer.botId != preferredBot.botId &&
+                    metricsByBotId[peer.botId]?.let { it.isHealthy && it.cooldownUntilMs.get() <= now && it.activeRequests.get() == 0 } != false
+            }
+            prefCoolingOrUnhealthy || (prefActive >= 1 && hasIdleTurboPeer) || (prefActive >= 3 && hasIdleHealthyPeer)
+        } else {
+            false
+        }
+
+        if (preferredBot != null && !shouldOffloadToIdlePeer) {
             try {
                 return downloadWithSpecificBot(
                     bot = preferredBot,
@@ -313,7 +351,7 @@ class MultiBotSwarmManager(
             }
         }
 
-        // Cross-bot failover & lazy message resolution: mint a bot-scoped file_id for chunk.telegramMessageId
+        // Cross-bot failover, parallel swarm offload & lazy message resolution
         require(channelId.isNotBlank() && chunk.telegramMessageId > 0L) {
             "Original uploader bot (${chunk.uploaderBotId}) unavailable and message ID missing for recovery."
         }
@@ -331,7 +369,9 @@ class MultiBotSwarmManager(
         }
 
         val newFileId = extracted.fileId
-        onReboundBotFileId?.invoke(newFileId, fallbackBot.botId)
+        if (preferredBot == null || !shouldOffloadToIdlePeer) {
+            onReboundBotFileId?.invoke(newFileId, fallbackBot.botId)
+        }
         try {
             return downloadWithSpecificBot(
                 bot = fallbackBot,
@@ -354,7 +394,16 @@ class MultiBotSwarmManager(
     fun registerBotScratchChat(botId: String, chatId: String) {
         if (botId.isNotBlank() && chatId.isNotBlank()) {
             scratchChatIdByBotId[botId] = chatId
+            refreshStatusSnapshot()
         }
+    }
+
+    fun registerScratchChatForAllBots(userDmChatId: String) {
+        if (userDmChatId.isBlank()) return
+        for (bot in credentialStore.getBots()) {
+            scratchChatIdByBotId.putIfAbsent(bot.botId, userDmChatId)
+        }
+        refreshStatusSnapshot()
     }
 
     fun getBotScratchChatsSnapshot(): Map<String, String> = scratchChatIdByBotId.toMap()
@@ -389,12 +438,11 @@ class MultiBotSwarmManager(
 
         var lastError: Throwable? = null
         repeat(maxAttempts) { attempt ->
-            val bot = acquireBestBot()
-            val metrics = metricsByBotId.computeIfAbsent(bot.botId) { MutableBotMetrics() }
+            val (bot, metrics) = acquireBotSlot(preferScratchChat = true)
             val targetScratchChat = scratchChatIdByBotId[bot.botId] ?: channelId
-            metrics.activeRequests.incrementAndGet()
             refreshStatusSnapshot()
             try {
+                val startMs = System.currentTimeMillis()
                 rateLimiter.acquireSendSlot(bot.botId)
                 val forwarded = apiClient.forwardMessage(
                     token = bot.token,
@@ -407,30 +455,50 @@ class MultiBotSwarmManager(
                     apiClient.deleteMessage(bot.token, targetScratchChat, forwarded.messageId)
                 }
                 metrics.isHealthy = true
+                metrics.lastLatencyMs = System.currentTimeMillis() - startMs
                 metrics.lastError = null
+                metrics.completedOps.incrementAndGet()
                 return bot to forwarded
             } catch (apiErr: TelegramApiException) {
                 lastError = apiErr
                 val desc = apiErr.apiDescription.lowercase()
+                val isScratchDmFailure = targetScratchChat != channelId && (
+                    apiErr.errorCode == 403 ||
+                        desc.contains("chat not found") ||
+                        desc.contains("peer_id_invalid") ||
+                        desc.contains("initiate conversation") ||
+                        desc.contains("bot was blocked") ||
+                        desc.contains("user is deactivated")
+                    )
                 if (apiErr.isFloodWait) {
                     val waitSec = (apiErr.retryAfterSeconds ?: 5).coerceIn(1, 180)
                     metrics.cooldownUntilMs.set(System.currentTimeMillis() + waitSec * 1000L)
                     metrics.lastError = "Rate limited (${waitSec}s cooldown)"
+                } else if (isScratchDmFailure) {
+                    // Bot hasn't received /start from user yet (or DM blocked) -> drop scratch DM for this bot & retry
+                    scratchChatIdByBotId.remove(bot.botId)
+                    onScratchChatInvalidated?.invoke(bot.botId)
                 } else if (
                     apiErr.errorCode == 400 && (
-                        desc.contains("not found") ||
+                        desc.contains("message to forward not found") ||
+                            desc.contains("message not found") ||
+                            desc.contains("not found") ||
                             desc.contains("can't be forwarded") ||
                             desc.contains("message_id_invalid") ||
                             desc.contains("empty")
                         )
                 ) {
                     // Deleted post, service post, or non-existent message gap -> skip immediately
+                    metrics.completedOps.incrementAndGet()
                     return null
-                } else if (targetScratchChat != channelId && apiErr.errorCode in setOf(400, 403)) {
-                    // User blocked bot DM -> drop scratch chat and retry via channel
-                    scratchChatIdByBotId.remove(bot.botId)
-                } else if (attempt < maxAttempts - 1) {
-                    delay(350L * (attempt + 1))
+                } else {
+                    if (apiErr.errorCode in setOf(401, 403)) {
+                        metrics.isHealthy = false
+                        metrics.lastError = apiErr.apiDescription
+                    }
+                    if (attempt < maxAttempts - 1) {
+                        delay(350L * (attempt + 1))
+                    }
                 }
             } catch (ioErr: IOException) {
                 lastError = ioErr
@@ -552,10 +620,54 @@ class MultiBotSwarmManager(
             metrics.lastLatencyMs = System.currentTimeMillis() - startMs
             metrics.lastError = null
             metrics.downloadedBytes.addAndGet(bytes.size.toLong())
+            metrics.completedOps.incrementAndGet()
             return bytes
         } finally {
             metrics.activeRequests.decrementAndGet()
             refreshStatusSnapshot()
+        }
+    }
+
+    private suspend fun acquireBotSlot(
+        preferScratchChat: Boolean = false,
+    ): Pair<StoredBotToken, MutableBotMetrics> {
+        while (true) {
+            val bots = credentialStore.getBots()
+            require(bots.isNotEmpty()) { "No Telegram bots configured in FT-Cloud swarm." }
+
+            val now = System.currentTimeMillis()
+            var shortestWaitMs = Long.MAX_VALUE
+            val reserved: Pair<StoredBotToken, MutableBotMetrics>? = selectionMutex.withLock {
+                val startIdx = (roundRobinCursor.getAndIncrement() and Int.MAX_VALUE) % bots.size
+                val rotated = (0 until bots.size).map { idx -> bots[(startIdx + idx) % bots.size] }
+                val anyScratchAvailable = preferScratchChat && rotated.any { scratchChatIdByBotId.containsKey(it.botId) }
+
+                val ready = rotated.filter { bot ->
+                    val m = metricsByBotId.computeIfAbsent(bot.botId) { MutableBotMetrics() }
+                    val rem = m.cooldownUntilMs.get() - now
+                    if (rem > 0L && rem < shortestWaitMs) {
+                        shortestWaitMs = rem
+                    }
+                    rem <= 0L
+                }
+                val best = ready.minByOrNull { bot ->
+                    val m = metricsByBotId.computeIfAbsent(bot.botId) { MutableBotMetrics() }
+                    val unhealthyPenalty = if (m.isHealthy) 0 else 100
+                    val nonScratchPenalty = if (anyScratchAvailable && !scratchChatIdByBotId.containsKey(bot.botId)) 20 else 0
+                    m.activeRequests.get() * 2 + nonScratchPenalty + unhealthyPenalty
+                }
+                best?.let { chosen ->
+                    val chosenMetrics = metricsByBotId.computeIfAbsent(chosen.botId) { MutableBotMetrics() }
+                    chosenMetrics.activeRequests.incrementAndGet()
+                    chosen to chosenMetrics
+                }
+            }
+
+            if (reserved != null) {
+                return reserved
+            }
+            val sleepMs = shortestWaitMs.coerceIn(100L, 15_000L)
+            delay(sleepMs)
         }
     }
 

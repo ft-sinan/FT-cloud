@@ -490,6 +490,12 @@ fun SettingsScreen(
 
                         botStatuses.forEach { bot ->
                             HorizontalDivider()
+                            val isCoolingDown = bot.cooldownRemainingMs > 0L
+                            val statusColor = when {
+                                !bot.isHealthy -> Color(0xFFD32F2F)
+                                isCoolingDown -> Color(0xFFF57C00)
+                                else -> Color(0xFF2E7D32)
+                            }
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 verticalAlignment = Alignment.CenterVertically,
@@ -498,26 +504,63 @@ fun SettingsScreen(
                                     modifier = Modifier
                                         .size(10.dp)
                                         .clip(CircleShape)
-                                        .background(if (bot.isHealthy) Color(0xFF2E7D32) else Color(0xFFD32F2F))
+                                        .background(statusColor)
                                 )
                                 Spacer(Modifier.width(10.dp))
                                 Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = if (bot.username.isNotBlank()) "@${bot.username}" else bot.displayName.ifBlank { "Bot ${bot.botId}" },
-                                        style = MaterialTheme.typography.bodyLarge,
-                                    )
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text(
+                                            text = if (bot.username.isNotBlank()) "@${bot.username}" else bot.displayName.ifBlank { "Bot ${bot.botId}" },
+                                            style = MaterialTheme.typography.bodyLarge,
+                                        )
+                                        if (bot.hasTurboDm) {
+                                            Spacer(Modifier.width(6.dp))
+                                            Text(
+                                                text = "⚡ Turbo DM",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.primary,
+                                            )
+                                        }
+                                        if (bot.activeRequests > 0) {
+                                            Spacer(Modifier.width(6.dp))
+                                            Text(
+                                                text = "• ${bot.activeRequests} active",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.tertiary,
+                                            )
+                                        }
+                                    }
                                     val latencyTag = bot.lastLatencyMs?.let { " • ${it}ms" }.orEmpty()
+                                    val opsTag = if (bot.completedOps > 0L) " • ${bot.completedOps} ops" else ""
                                     Text(
-                                        text = "${bot.maskedToken}$latencyTag • ↑${FormatUtils.formatBytes(bot.uploadedBytes)} ↓${FormatUtils.formatBytes(bot.downloadedBytes)}",
+                                        text = "${bot.maskedToken}$latencyTag$opsTag • ↑${FormatUtils.formatBytes(bot.uploadedBytes)} ↓${FormatUtils.formatBytes(bot.downloadedBytes)}",
                                         style = MaterialTheme.typography.labelMedium,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
-                                    if (!bot.lastError.isNullOrBlank()) {
+                                    if (isCoolingDown) {
+                                        Text(
+                                            text = "⏳ Telegram cooldown (${(bot.cooldownRemainingMs + 999L) / 1000L}s) — other bots continue in parallel",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = Color(0xFFF57C00),
+                                        )
+                                    } else if (!bot.lastError.isNullOrBlank()) {
                                         Text(
                                             text = bot.lastError,
                                             style = MaterialTheme.typography.labelSmall,
                                             color = MaterialTheme.colorScheme.error,
                                         )
+                                    }
+                                }
+                                if (!bot.hasTurboDm && bot.username.isNotBlank()) {
+                                    TextButton(
+                                        onClick = {
+                                            runCatching {
+                                                val startUri = android.net.Uri.parse("https://t.me/${bot.username}?start=ftcloud")
+                                                context.startActivity(Intent(Intent.ACTION_VIEW, startUri))
+                                            }
+                                        },
+                                    ) {
+                                        Text("⚡ Start")
                                     }
                                 }
                                 if (botStatuses.size > 1) {
@@ -530,13 +573,21 @@ fun SettingsScreen(
                             }
                         }
 
+                        if (botStatuses.any { !it.hasTurboDm }) {
+                            Text(
+                                text = "Tip: Make sure every bot is a Channel Administrator (Post + Delete + Pin), and tap ⚡ Start once in Telegram so all ${botStatuses.size} bots bypass Telegram's shared 20 msg/min channel quota and run at full parallel speed.",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+
                         OutlinedButton(
                             onClick = { showAddBotDialog = true },
                             modifier = Modifier.fillMaxWidth(),
                         ) {
                             Icon(Icons.Outlined.Add, contentDescription = null)
                             Spacer(Modifier.width(6.dp))
-                            Text("Add Bot to Swarm")
+                            Text("Add Bot(s) to Swarm")
                         }
                     }
                 }
@@ -1262,27 +1313,39 @@ fun SettingsScreen(
     if (showAddBotDialog) {
         AlertDialog(
             onDismissRequest = { showAddBotDialog = false },
-            title = { Text("Add Swarm Bot") },
+            title = { Text("Add Swarm Bot(s)") },
             text = {
-                OutlinedTextField(
-                    value = newBotToken,
-                    onValueChange = { newBotToken = it },
-                    label = { Text("Bot Token from @BotFather") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "Add each bot as an Administrator in your Telegram channel first (Post + Delete + Pin). You can paste one or multiple tokens separated by newlines:",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    OutlinedTextField(
+                        value = newBotToken,
+                        onValueChange = { newBotToken = it },
+                        label = { Text("Bot Token(s) from @BotFather") },
+                        maxLines = 4,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
             },
             confirmButton = {
                 TextButton(
                     enabled = newBotToken.isNotBlank(),
                     onClick = {
-                        val token = newBotToken
+                        val rawTokens = newBotToken
                         newBotToken = ""
                         showAddBotDialog = false
                         scope.launch {
-                            runCatching { container.swarmManager.addAndVerifyBot(token) }
-                                .onSuccess { snackbarHostState.showSnackbar("Added @${it.username} to Bot Swarm") }
-                                .onFailure { snackbarHostState.showSnackbar(it.message ?: "Failed to add bot") }
+                            runCatching {
+                                val added = container.swarmManager.addAndVerifyBots(rawTokens)
+                                runCatching { container.channelMediaImporter.syncPendingBotUpdates() }
+                                added
+                            }.onSuccess { added ->
+                                val names = added.joinToString(", ") { "@${it.username.ifBlank { it.botId }}" }
+                                snackbarHostState.showSnackbar("Added ${added.size} swarm ${if (added.size == 1) "bot" else "bots"}: $names")
+                            }.onFailure { snackbarHostState.showSnackbar(it.message ?: "Failed to add bot") }
                         }
                     }
                 ) {

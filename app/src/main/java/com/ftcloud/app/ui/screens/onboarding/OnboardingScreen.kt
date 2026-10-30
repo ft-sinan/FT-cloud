@@ -376,7 +376,20 @@ fun OnboardingScreen(
                     OutlinedTextField(
                         value = token,
                         onValueChange = { updated ->
-                            botTokens[index] = updated
+                            val splitCandidates = updated
+                                .split('\n', '\r', ',', ';', ' ', '\t')
+                                .map { it.trim() }
+                                .filter { it.isNotEmpty() }
+                            if (splitCandidates.size >= 2 && splitCandidates.all { it.contains(':') }) {
+                                botTokens[index] = splitCandidates.first()
+                                splitCandidates.drop(1).forEachIndexed { offset, extra ->
+                                    if (!botTokens.contains(extra)) {
+                                        botTokens.add(index + 1 + offset, extra)
+                                    }
+                                }
+                            } else {
+                                botTokens[index] = updated
+                            }
                             errorMessage = null
                         },
                         label = { Text("Bot #${index + 1} Token") },

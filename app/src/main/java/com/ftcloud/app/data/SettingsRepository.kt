@@ -262,6 +262,18 @@ class SettingsRepository(
         }
     }
 
+    suspend fun removeBotScratchChat(botId: String) {
+        dataStore.edit { prefs ->
+            val current = prefs[KEY_BOT_SCRATCH_CHATS_JSON]
+                ?.let { runCatching { json.decodeFromString<Map<String, String>>(it) }.getOrNull() }
+                .orEmpty()
+                .toMutableMap()
+            if (current.remove(botId) != null) {
+                prefs[KEY_BOT_SCRATCH_CHATS_JSON] = json.encodeToString(current)
+            }
+        }
+    }
+
     suspend fun recordManifestSync(messageId: Long, syncedAtMs: Long = System.currentTimeMillis()) {
         dataStore.edit {
             it[KEY_PINNED_MANIFEST_MSG_ID] = messageId

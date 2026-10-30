@@ -2,6 +2,15 @@
 
 All notable changes to **FT Cloud** are documented in this file.
 
+## [1.2.4] - 2026-10-30
+
+### Fixed & Improved
+- **True Parallel 3+ Bot Swarm Execution Across Uploads, Scans & Downloads**:
+  - **Parallel Multi-File Uploads & Downloads (`TransferWorker`)**: Queued uploads and downloads now run concurrently across `botCount` parallel workers (`Semaphore(botCount)`) instead of 1-by-1, and single-file multi-chunk concurrency scales up to 6 bots.
+  - **Parallel Multi-Bot Channel History Scanner (`ChannelMediaImporter`)**: Removed the `stepWidth = 1` single-bot bottleneck so all 3+ bots scan channel messages concurrently; automatically propagates your Telegram `user_id` across all bots once `/start` is detected on any bot and picks up new `/start` activations live mid-scan.
+  - **Atomic Bot Slot Reservation & Parallel Download Offloading (`MultiBotSwarmManager`)**: Fixed a concurrency race in `acquireBestBot()` via atomic `acquireBotSlot()` reservation, fixed `"chat not found"` unstarted-DM fallback so channel messages are never skipped, and added automatic idle-peer offloading on concurrent gallery/file downloads.
+  - **Live Per-Bot Swarm Telemetry & 1-Tap `⚡ Start` Deep Links**: Added live `ops` / `active` / `⚡ Turbo DM` / amber cooldown indicators, multi-token paste support, and 1-tap `⚡ Start` buttons in **Settings → Telegram Bot Swarm** (`https://t.me/<bot>?start=ftcloud`).
+
 ## [1.2.3] - 2026-10-30
 
 ### Fixed & Improved

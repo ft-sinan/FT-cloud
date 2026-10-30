@@ -76,7 +76,7 @@ class ChunkedUploadEngine(
         val transferredBytesCounter = AtomicLong(existingChunks.values.sumOf { it.rawSize })
         val progressMutex = Mutex()
 
-        val maxParallel = credentialStore.getBots().size.coerceIn(1, 3)
+        val maxParallel = credentialStore.getBots().size.coerceIn(1, 6)
         val semaphore = Semaphore(maxParallel)
 
         var totalBytesRead = 0L

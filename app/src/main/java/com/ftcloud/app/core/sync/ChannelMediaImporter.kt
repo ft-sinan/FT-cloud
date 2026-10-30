@@ -21,11 +21,14 @@ import com.ftcloud.app.core.telegram.TelegramBotApiClient
 import com.ftcloud.app.core.telegram.TgMessage
 import com.ftcloud.app.core.telegram.extractBestMedia
 import com.ftcloud.app.data.SettingsRepository
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -39,6 +42,7 @@ import java.io.InputStream
 import java.time.LocalDateTime
 import java.time.ZoneOffset
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.coroutineContext
 
 data class ChannelImportSummary(
@@ -88,11 +92,42 @@ class ChannelMediaImporter(
         ignoreUnknownKeys = true
         isLenient = true
     }
+    private val importerScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val invalidatedScratchBotIds = ConcurrentHashMap.newKeySet<String>()
+
+    init {
+        swarmManager.onScratchChatInvalidated = { failedBotId ->
+            invalidatedScratchBotIds += failedBotId
+            importerScope.launch {
+                runCatching { settingsRepository.removeBotScratchChat(failedBotId) }
+            }
+        }
+    }
 
     suspend fun hydrateSavedScratchChats() {
         val saved = settingsRepository.getBotScratchChats()
         for ((botId, chatId) in saved) {
-            swarmManager.registerBotScratchChat(botId, chatId)
+            if (botId !in invalidatedScratchBotIds) {
+                swarmManager.registerBotScratchChat(botId, chatId)
+            }
+        }
+        val knownUserDmId = saved.values.firstOrNull { it.isNotBlank() }
+        if (!knownUserDmId.isNullOrBlank()) {
+            propagateUserDmToSwarm(knownUserDmId)
+        }
+    }
+
+    private suspend fun propagateUserDmToSwarm(userDmChatId: String) {
+        if (userDmChatId.isBlank()) return
+        val propagated = mutableMapOf<String, String>()
+        for (bot in credentialStore.getBots()) {
+            if (bot.botId !in invalidatedScratchBotIds) {
+                swarmManager.registerBotScratchChat(bot.botId, userDmChatId)
+                propagated[bot.botId] = userDmChatId
+            }
+        }
+        if (propagated.isNotEmpty()) {
+            settingsRepository.saveBotScratchChatsAll(propagated)
         }
     }
 
@@ -326,12 +361,14 @@ class ChannelMediaImporter(
                 for (upd in updates) {
                     nextOffset = upd.updateId + 1L
 
-                    // Capture private user DM chat ID for Turbo Channel Scanning
+                    // Capture private user DM chat ID for Turbo Channel Scanning & propagate across swarm
                     val privMsg = upd.message
                     if (privMsg?.chat?.type == "private" && privMsg.chat.id > 0L) {
                         val dmId = privMsg.chat.id.toString()
+                        invalidatedScratchBotIds.remove(bot.botId)
                         swarmManager.registerBotScratchChat(bot.botId, dmId)
                         settingsRepository.saveBotScratchChat(bot.botId, dmId)
+                        propagateUserDmToSwarm(dmId)
                     }
 
                     // Candidate media message: either a live channel_post in our storage channel
@@ -504,10 +541,15 @@ class ChannelMediaImporter(
         }
 
         var unpushedImports = 0
+        var batchIterations = 0
 
         try {
             while (cursorId >= 1L) {
                 coroutineContext.ensureActive()
+                batchIterations++
+                if (batchIterations % 15 == 0) {
+                    runCatching { syncPendingBotUpdates() }
+                }
 
                 val latestSettings = settingsRepository.getSnapshot()
                 if (!latestSettings.channelScanRunning) {
@@ -524,9 +566,14 @@ class ChannelMediaImporter(
                     return@withContext
                 }
 
-                // Determine parallelism: parallel across Turbo DM bots, or 1-by-1 if using shared channel
+                // Parallelism scales across all configured swarm bots (preferring private Turbo DM chats)
+                val botCount = credentialStore.getBots().size.coerceAtLeast(1)
                 val turboCount = swarmManager.getBotScratchChatsSnapshot().size
-                val stepWidth = if (turboCount >= 2) minOf(turboCount, 4) else 1
+                val stepWidth = if (turboCount >= 1) {
+                    maxOf(turboCount, botCount).coerceIn(1, 6)
+                } else {
+                    botCount.coerceIn(1, 3)
+                }
 
                 val candidateIds = mutableListOf<Long>()
                 while (cursorId >= 1L && candidateIds.size < stepWidth) {
@@ -614,11 +661,16 @@ class ChannelMediaImporter(
                     }
                 }
 
+                val swarmBadge = if (turboCount > 0) {
+                    "⚡ $turboCount/$botCount Turbo"
+                } else {
+                    "$botCount ${if (botCount == 1) "bot" else "bots"}"
+                }
                 settingsRepository.updateChannelScanState(
                     cursorId = cursorId,
                     checkedCount = checked,
                     importedCount = imported,
-                    status = "Scanning #$cursorId / #$maxId • Imported $imported media",
+                    status = "Scanning #$cursorId / #$maxId ($swarmBadge) • Imported $imported media",
                 )
 
                 if (unpushedImports >= 50) {

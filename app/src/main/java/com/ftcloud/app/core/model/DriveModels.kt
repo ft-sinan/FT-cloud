@@ -188,6 +188,8 @@ data class BotRuntimeStatus(
     val downloadedBytes: Long,
     val lastLatencyMs: Long?,
     val lastError: String?,
+    val hasTurboDm: Boolean = false,
+    val completedOps: Long = 0L,
 )
 
 enum class TransferDirection {
