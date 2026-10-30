@@ -485,8 +485,10 @@ class DriveRepository(
     }
 
     suspend fun restoreManifestFromChannel(passphrase: String? = null): ManifestRestoreSummary? {
+        val knownId = settingsRepository.getSnapshot().pinnedManifestMessageId
         val summary = manifestSync.restoreFromPinnedManifest(
             passphrase = passphrase?.takeIf { it.isNotBlank() }?.toCharArray(),
+            knownMessageId = knownId,
         )
         if (summary != null) {
             settingsRepository.recordManifestSync(summary.pinnedMessageId)
@@ -497,6 +499,7 @@ class DriveRepository(
     suspend fun syncMultiDeviceCloud(
         forcePull: Boolean = false,
         passphrase: String? = null,
+        allowTailFallback: Boolean = false,
     ): MultiDeviceSyncResult {
         val snap = settingsRepository.getSnapshot()
         if (!snap.isConfigured) return MultiDeviceSyncResult(upToDate = true)
@@ -507,6 +510,7 @@ class DriveRepository(
             passphrase = passphrase?.takeIf { it.isNotBlank() }?.toCharArray(),
             localDeletedFileIds = deletedFiles,
             localDeletedFolderIds = deletedFolders,
+            allowTailFallback = allowTailFallback,
         )
         if (result.pinnedMessageId != null && !result.requiresPassphrase) {
             settingsRepository.recordManifestSync(result.pinnedMessageId)
@@ -521,7 +525,15 @@ class DriveRepository(
     suspend fun generateDevicePairingKit(
         pin: String = DevicePairingManager.generatePin(),
     ): GeneratedPairingKit = withContext(Dispatchers.IO) {
-        val snap = settingsRepository.getSnapshot()
+        var snap = settingsRepository.getSnapshot()
+        if (snap.pinnedManifestMessageId == null) {
+            val hasLocalItems = fileDao.getAllFilesSnapshot().isNotEmpty() ||
+                folderDao.getAllFoldersSnapshot().isNotEmpty()
+            if (hasLocalItems) {
+                runCatching { syncManifestNow() }
+                snap = settingsRepository.getSnapshot()
+            }
+        }
         val bots = credentialStore.getBots()
         val scratchChats = settingsRepository.getBotScratchChats()
         val vaultKey = credentialStore.getVaultEncryptionKey()
@@ -535,6 +547,7 @@ class DriveRepository(
             vaultSaltBase64 = credentialStore.getVaultPassphraseSaltB64(),
             vaultVerifier = credentialStore.getVaultKeyVerifier(),
             githubUpdateToken = credentialStore.getGithubUpdateToken(),
+            pinnedManifestMessageId = snap.pinnedManifestMessageId,
         )
         DevicePairingManager.createPairingKit(
             payload = payload,
@@ -580,6 +593,9 @@ class DriveRepository(
         }
         if (payload.githubUpdateToken.isNotBlank()) {
             credentialStore.saveGithubUpdateToken(payload.githubUpdateToken)
+        }
+        if (payload.pinnedManifestMessageId != null && payload.pinnedManifestMessageId > 0L) {
+            settingsRepository.recordManifestSync(payload.pinnedManifestMessageId)
         }
         verified
     }

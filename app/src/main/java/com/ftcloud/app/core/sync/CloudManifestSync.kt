@@ -14,6 +14,7 @@ import com.ftcloud.app.core.model.CloudManifestPayload
 import com.ftcloud.app.core.model.ManifestChunkDto
 import com.ftcloud.app.core.model.ManifestFileDto
 import com.ftcloud.app.core.model.ManifestFolderDto
+import com.ftcloud.app.core.model.StoredBotToken
 import com.ftcloud.app.core.telegram.MultiBotSwarmManager
 import com.ftcloud.app.core.telegram.TgMessage
 import kotlinx.coroutines.Dispatchers
@@ -54,19 +55,20 @@ class CloudManifestSync(
 ) {
     private val syncMutex = Mutex()
 
-    suspend fun inspectPinnedManifest(): PinnedManifestInspection? = withContext(Dispatchers.IO) {
-        val bot = swarmManager.getPrimaryOrBestBotSnapshot() ?: return@withContext null
-        val chat = swarmManager.fetchChatWithPinnedMessage()
-        val pinned = chat.pinnedMessage ?: return@withContext null
-        val doc = pinned.document ?: return@withContext null
-        val isManifest = doc.fileName == CloudManifestEnvelope.MANIFEST_FILE_NAME ||
-            pinned.caption?.contains("#ftcloud_manifest") == true
-        if (!isManifest) return@withContext null
+    suspend fun inspectPinnedManifest(
+        knownMessageId: Long? = null,
+        allowTailFallback: Boolean = true,
+    ): PinnedManifestInspection? = withContext(Dispatchers.IO) {
+        val (bot, manifestMsg) = resolveRemoteManifestMessage(
+            knownMessageId = knownMessageId,
+            allowTailFallback = allowTailFallback,
+        ) ?: return@withContext null
+        val doc = manifestMsg.document ?: return@withContext null
 
         val rawBytes = swarmManager.downloadArbitraryBotFile(bot, doc.fileId)
         val envelope = CloudManifestCodec.inspectEnvelope(rawBytes) ?: return@withContext null
         PinnedManifestInspection(
-            pinnedMessageId = pinned.messageId,
+            pinnedMessageId = manifestMsg.messageId,
             encrypted = envelope.encrypted,
         )
     }
@@ -77,6 +79,7 @@ class CloudManifestSync(
         passphrase: CharArray? = null,
         localDeletedFileIds: Set<String> = emptySet(),
         localDeletedFolderIds: Set<String> = emptySet(),
+        allowTailFallback: Boolean = false,
     ): MultiDeviceSyncResult = withContext(Dispatchers.IO) {
         syncMutex.withLock {
             pullAndMergeLocked(
@@ -85,6 +88,7 @@ class CloudManifestSync(
                 passphrase = passphrase,
                 localDeletedFileIds = localDeletedFileIds,
                 localDeletedFolderIds = localDeletedFolderIds,
+                allowTailFallback = allowTailFallback,
             )
         }
     }
@@ -222,14 +226,16 @@ class CloudManifestSync(
 
     suspend fun restoreFromPinnedManifest(
         passphrase: CharArray? = null,
+        knownMessageId: Long? = null,
     ): ManifestRestoreSummary? = withContext(Dispatchers.IO) {
         syncMutex.withLock {
             val res = pullAndMergeLocked(
-                lastKnownMessageId = null,
+                lastKnownMessageId = knownMessageId,
                 forcePull = true,
                 passphrase = passphrase,
                 localDeletedFileIds = emptySet(),
                 localDeletedFolderIds = emptySet(),
+                allowTailFallback = true,
             )
             if (res.noRemoteManifest || res.pinnedMessageId == null) {
                 return@withLock null
@@ -245,28 +251,50 @@ class CloudManifestSync(
         }
     }
 
+    private suspend fun resolveRemoteManifestMessage(
+        knownMessageId: Long?,
+        allowTailFallback: Boolean,
+    ): Pair<StoredBotToken, TgMessage>? {
+        val (chatBot, chat) = swarmManager.fetchChatWithBot()
+        val pinned = chat.pinnedMessage
+        val pinnedDoc = pinned?.document
+        val isPinnedManifest = pinned != null && pinnedDoc != null && (
+            pinnedDoc.fileName == CloudManifestEnvelope.MANIFEST_FILE_NAME ||
+                pinned.caption?.contains("#ftcloud_manifest") == true
+            )
+        if (isPinnedManifest) {
+            return chatBot to pinned
+        }
+        if (!allowTailFallback) {
+            return null
+        }
+        return swarmManager.findManifestInChannelTail(
+            knownMessageId = knownMessageId,
+            lookbackCount = 20,
+        )
+    }
+
     private suspend fun pullAndMergeLocked(
         lastKnownMessageId: Long?,
         forcePull: Boolean,
         passphrase: CharArray?,
         localDeletedFileIds: Set<String>,
         localDeletedFolderIds: Set<String>,
+        allowTailFallback: Boolean = false,
     ): MultiDeviceSyncResult {
-        val bot = swarmManager.getPrimaryOrBestBotSnapshot()
-            ?: throw IllegalStateException("No bots configured in swarm")
-        val chat = swarmManager.fetchChatWithPinnedMessage()
-        val pinned = chat.pinnedMessage
-            ?: return MultiDeviceSyncResult(upToDate = true, noRemoteManifest = true)
+        val localFiles = fileDao.getAllFilesSnapshot()
+        val localFolders = folderDao.getAllFoldersSnapshot()
+        val shouldTryTail = allowTailFallback ||
+            ((forcePull || lastKnownMessageId != null) && localFiles.isEmpty() && localFolders.isEmpty())
+
+        val (bot, pinned) = resolveRemoteManifestMessage(
+            knownMessageId = lastKnownMessageId,
+            allowTailFallback = shouldTryTail,
+        ) ?: return MultiDeviceSyncResult(upToDate = true, noRemoteManifest = true)
+
         val doc = pinned.document
             ?: return MultiDeviceSyncResult(upToDate = true, noRemoteManifest = true)
 
-        val isManifest = doc.fileName == CloudManifestEnvelope.MANIFEST_FILE_NAME ||
-            pinned.caption?.contains("#ftcloud_manifest") == true
-        if (!isManifest) {
-            return MultiDeviceSyncResult(upToDate = true, noRemoteManifest = true)
-        }
-
-        val localFiles = fileDao.getAllFilesSnapshot()
         if (!forcePull && lastKnownMessageId != null && pinned.messageId == lastKnownMessageId && localFiles.isNotEmpty()) {
             return MultiDeviceSyncResult(
                 upToDate = true,
@@ -297,7 +325,7 @@ class CloudManifestSync(
         val allDeletedFileIds = localDeletedFileIds + payload.deletedFileIds
         val allDeletedFolderIds = localDeletedFolderIds + payload.deletedFolderIds
 
-        val localFoldersById = folderDao.getAllFoldersSnapshot().associateBy { it.id }
+        val localFoldersById = localFolders.associateBy { it.id }
         val localFilesById = localFiles.associateBy { it.id }
         val localChunksByFile = chunkDao.getAllChunksSnapshot().groupBy { it.driveFileId }
 

@@ -73,6 +73,8 @@ import kotlinx.coroutines.withContext
 @Composable
 fun OnboardingScreen(
     container: FTCloudContainer,
+    onSyncStarted: () -> Unit = {},
+    onSyncAborted: () -> Unit = {},
     onConnected: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -99,7 +101,13 @@ fun OnboardingScreen(
 
     suspend fun finishConnectionWithAutoSync() {
         connectingStatus = "Syncing cloud index & media catalog…"
-        val inspection = runCatching { container.manifestSync.inspectPinnedManifest() }.getOrNull()
+        val knownId = runCatching { container.settingsRepository.getSnapshot().pinnedManifestMessageId }.getOrNull()
+        val inspection = runCatching {
+            container.manifestSync.inspectPinnedManifest(
+                knownMessageId = knownId,
+                allowTailFallback = true,
+            )
+        }.getOrNull()
         if (inspection != null) {
             if (!inspection.encrypted) {
                 runCatching { container.driveRepository.restoreManifestFromChannel() }
@@ -118,6 +126,7 @@ fun OnboardingScreen(
     }
 
     fun handleQrStringDecoded(qrText: String) {
+        onSyncStarted()
         isConnecting = true
         errorMessage = null
         connectingStatus = "Linking phone & verifying Bot Swarm…"
@@ -128,6 +137,7 @@ fun OnboardingScreen(
                 finishConnectionWithAutoSync()
             }.onFailure { err ->
                 isConnecting = false
+                onSyncAborted()
                 errorMessage = err.message ?: "Failed to pair from QR code."
             }
         }
@@ -419,6 +429,7 @@ fun OnboardingScreen(
 
             Button(
                 onClick = {
+                    onSyncStarted()
                     isConnecting = true
                     errorMessage = null
                     connectingStatus = "Verifying Bot Swarm & Channel…"
@@ -432,6 +443,7 @@ fun OnboardingScreen(
                             finishConnectionWithAutoSync()
                         }.onFailure { err ->
                             isConnecting = false
+                            onSyncAborted()
                             errorMessage = err.message ?: "Failed to connect to Telegram channel."
                         }
                     }
@@ -514,6 +526,7 @@ fun OnboardingScreen(
                 Button(
                     enabled = !isConnecting && pairingKeyInput.isNotBlank(),
                     onClick = {
+                        onSyncStarted()
                         isConnecting = true
                         pairingDialogError = null
                         connectingStatus = "Decrypting pairing key & connecting Swarm…"
@@ -528,6 +541,7 @@ fun OnboardingScreen(
                                 finishConnectionWithAutoSync()
                             }.onFailure { err ->
                                 isConnecting = false
+                                onSyncAborted()
                                 pairingDialogError = err.message ?: "Could not pair device."
                             }
                         }

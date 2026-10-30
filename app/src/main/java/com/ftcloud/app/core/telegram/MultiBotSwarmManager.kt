@@ -445,25 +445,71 @@ class MultiBotSwarmManager(
         throw lastError ?: IOException("Unable to inspect message #$messageId")
     }
 
-    suspend fun fetchChatWithPinnedMessage(): TgChat {
+    suspend fun fetchChatWithBot(): Pair<StoredBotToken, TgChat> {
         val channelId = credentialStore.getChannelId()
         require(channelId.isNotBlank()) { "Channel ID is not configured." }
         val bot = acquireBestBot()
-        return apiClient.getChat(bot.token, channelId)
+        return bot to apiClient.getChat(bot.token, channelId)
     }
+
+    suspend fun fetchChatWithPinnedMessage(): TgChat = fetchChatWithBot().second
 
     suspend fun downloadArbitraryBotFile(bot: StoredBotToken, telegramFileId: String): ByteArray {
         return downloadWithSpecificBot(bot, telegramFileId, null, null, null)
     }
 
-    suspend fun pinMessageInChannel(messageId: Long, preferredBotId: String? = null) {
+    suspend fun pinMessageInChannel(messageId: Long, preferredBotId: String? = null): Boolean {
         val channelId = credentialStore.getChannelId()
-        if (channelId.isBlank()) return
+        if (channelId.isBlank()) return false
         val bots = credentialStore.getBots()
-        val bot = bots.firstOrNull { it.botId == preferredBotId } ?: acquireBestBot()
-        runCatching {
-            apiClient.pinChatMessage(bot.token, channelId, messageId, disableNotification = true)
+        if (bots.isEmpty()) return false
+        val orderedBots = buildList {
+            bots.firstOrNull { it.botId == preferredBotId }?.let { add(it) }
+            addAll(bots.filterNot { it.botId == preferredBotId })
         }
+        for (bot in orderedBots) {
+            val pinned = runCatching {
+                apiClient.pinChatMessage(bot.token, channelId, messageId, disableNotification = true)
+            }.isSuccess
+            if (pinned) return true
+        }
+        return false
+    }
+
+    /**
+     * Recovers an unpinned `#ftcloud_manifest` document from the channel tail (for example when
+     * bots were not yet granted `"Pin messages"` admin permission or another post was pinned later).
+     */
+    suspend fun findManifestInChannelTail(
+        knownMessageId: Long? = null,
+        lookbackCount: Int = 20,
+    ): Pair<StoredBotToken, TgMessage>? {
+        fun isManifestMessage(msg: TgMessage): Boolean {
+            val doc = msg.document ?: return false
+            return doc.fileName == com.ftcloud.app.core.model.CloudManifestEnvelope.MANIFEST_FILE_NAME ||
+                msg.caption?.contains("#ftcloud_manifest") == true
+        }
+
+        if (knownMessageId != null && knownMessageId > 0L) {
+            val direct = runCatching { inspectChannelMessage(knownMessageId) }.getOrNull()
+            if (direct != null && isManifestMessage(direct.second)) {
+                pinMessageInChannel(knownMessageId, direct.first.botId)
+                return direct.first to direct.second.copy(messageId = knownMessageId)
+            }
+        }
+
+        val maxId = runCatching { probeLatestChannelMessageId() }.getOrDefault(0L)
+        if (maxId <= 0L) return null
+        val minId = (maxId - lookbackCount.coerceIn(1, 40) + 1L).coerceAtLeast(1L)
+        for (msgId in maxId downTo minId) {
+            if (knownMessageId != null && msgId == knownMessageId) continue
+            val pair = runCatching { inspectChannelMessage(msgId) }.getOrNull() ?: continue
+            if (isManifestMessage(pair.second)) {
+                pinMessageInChannel(msgId, pair.first.botId)
+                return pair.first to pair.second.copy(messageId = msgId)
+            }
+        }
+        return null
     }
 
     suspend fun deleteMessagesFromChannel(messageIds: List<Long>) {

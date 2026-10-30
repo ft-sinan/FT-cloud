@@ -23,6 +23,7 @@ class DevicePairingAndMultiDeviceSyncTest {
             botTokens = listOf("111111:AAH_token_one", "222222:BBG_token_two"),
             botScratchChats = mapOf("111111" to "777888999"),
             encryptionEnabled = false,
+            pinnedManifestMessageId = 7429L,
         )
 
         val kit = DevicePairingManager.createPairingKit(
@@ -47,6 +48,7 @@ class DevicePairingAndMultiDeviceSyncTest {
         assertEquals(original.channelId, fromKey.channelId)
         assertEquals(original.botTokens, fromKey.botTokens)
         assertEquals(original.botScratchChats, fromKey.botScratchChats)
+        assertEquals(7429L, fromKey.pinnedManifestMessageId)
 
         // 2. Decrypt directly from scanned ftcloud://pair?... QR URI without manual PIN
         val fromQr = DevicePairingManager.parseAndDecrypt(

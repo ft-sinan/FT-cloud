@@ -67,6 +67,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.ftcloud.app.core.model.AppSettings
 import com.ftcloud.app.core.model.DriveFile
@@ -76,8 +77,10 @@ import com.ftcloud.app.core.model.DriveViewMode
 import com.ftcloud.app.core.model.FileCategory
 import com.ftcloud.app.core.model.SortDirection
 import com.ftcloud.app.core.model.SortOption
+import com.ftcloud.app.core.sync.ChannelScanScheduler
 import com.ftcloud.app.di.FTCloudContainer
 import com.ftcloud.app.ui.components.BreadcrumbBar
+import com.ftcloud.app.ui.components.ChannelHistoryQuickImportCard
 import com.ftcloud.app.ui.components.DriveFileGridCard
 import com.ftcloud.app.ui.components.DriveFileRow
 import com.ftcloud.app.ui.components.DriveFolderRow
@@ -99,6 +102,7 @@ fun DriveScreen(
     onOpenStarred: () -> Unit,
     onOpenTrash: () -> Unit,
 ) {
+    val context = LocalContext.current
     val repo = container.driveRepository
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
@@ -121,6 +125,7 @@ fun DriveScreen(
     var moveTargetIds by remember { mutableStateOf<Pair<Set<String>, Set<String>>?>(null) }
     var sortMenuExpanded by remember { mutableStateOf(false) }
     var isSyncingManifest by remember { mutableStateOf(false) }
+    var isImportingExportJson by remember { mutableStateOf(false) }
 
     val stats by repo.observeStats().collectAsState(initial = DriveStats())
     val allFolders by repo.observeAllActiveFolders().collectAsState(initial = emptyList())
@@ -170,6 +175,78 @@ fun DriveScreen(
             scope.launch {
                 val queued = repo.enqueueUriUploads(uris, currentFolderId)
                 snackbarHostState.showSnackbar("Queued $queued ${if (queued == 1) "file" else "files"} for cloud upload")
+            }
+        }
+    }
+
+    val exportJsonLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument(),
+    ) { uri: Uri? ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        isImportingExportJson = true
+        scope.launch {
+            runCatching {
+                val summary = context.contentResolver.openInputStream(uri)?.use { stream ->
+                    container.channelMediaImporter.importTelegramExportJson(stream)
+                } ?: error("Unable to read selected JSON file.")
+                runCatching { repo.syncManifestNow() }
+                summary
+            }.onSuccess { summary ->
+                snackbarHostState.showSnackbar(
+                    "Imported ${summary.importedFiles} channel items (${summary.skippedExisting} already indexed)"
+                )
+            }.onFailure { err ->
+                snackbarHostState.showSnackbar(err.message ?: "Failed to import Telegram export JSON")
+            }
+            isImportingExportJson = false
+        }
+    }
+
+    val startOrResumeChannelScan: () -> Unit = {
+        scope.launch {
+            container.settingsRepository.updateChannelScanState(
+                running = true,
+                status = "Starting newest-first channel scan…",
+            )
+            ChannelScanScheduler.startOrResume(context)
+        }
+    }
+
+    val pauseChannelScan: () -> Unit = {
+        scope.launch {
+            container.settingsRepository.updateChannelScanState(
+                running = false,
+                status = "Pausing scanner…",
+            )
+            ChannelScanScheduler.cancel(context)
+        }
+    }
+
+    val checkOrRestoreCloudIndex: () -> Unit = {
+        if (!isSyncingManifest) {
+            isSyncingManifest = true
+            scope.launch {
+                runCatching {
+                    val merge = repo.syncMultiDeviceCloud(
+                        forcePull = true,
+                        allowTailFallback = true,
+                    )
+                    val live = container.channelMediaImporter.syncPendingBotUpdates()
+                    merge to live
+                }.onSuccess { (merge, live) ->
+                    val added = merge.addedFiles + live.importedFiles
+                    val msg = when {
+                        merge.requiresPassphrase -> "Encrypted cloud index found — open Settings → Restore Encrypted Index to unlock."
+                        added > 0 -> "Restored +$added cloud ${if (added == 1) "item" else "items"} from channel!"
+                        merge.noRemoteManifest && stats.totalFiles == 0 ->
+                            "No cloud index saved in this channel yet — tap Scan Channel Now to index existing posts."
+                        else -> "Cloud index is up to date"
+                    }
+                    snackbarHostState.showSnackbar(msg)
+                }.onFailure { err ->
+                    snackbarHostState.showSnackbar(err.message ?: "Cloud sync failed")
+                }
+                isSyncingManifest = false
             }
         }
     }
@@ -249,15 +326,22 @@ fun DriveScreen(
                                 if (!isSyncingManifest) {
                                     isSyncingManifest = true
                                     scope.launch {
+                                        val isEmptyLocal = stats.totalFiles == 0 && stats.totalFolders == 0
                                         runCatching {
-                                            val merge = repo.syncMultiDeviceCloud(forcePull = false)
+                                            val merge = repo.syncMultiDeviceCloud(
+                                                forcePull = isEmptyLocal,
+                                                allowTailFallback = isEmptyLocal,
+                                            )
                                             val live = container.channelMediaImporter.syncPendingBotUpdates()
                                             merge to live
                                         }.onSuccess { (merge, live) ->
                                             val added = merge.addedFiles + live.importedFiles
                                             val msg = when {
+                                                merge.requiresPassphrase -> "Encrypted cloud index found — unlock in Settings"
                                                 added > 0 -> "Synced across devices • +$added new ${if (added == 1) "item" else "items"}"
                                                 merge.updatedFiles > 0 || merge.removedFiles > 0 -> "Synced folder & file changes across devices"
+                                                merge.noRemoteManifest && isEmptyLocal ->
+                                                    "No cloud index pinned yet — tap Scan Channel Now to index existing posts"
                                                 else -> "All phones in sync"
                                             }
                                             snackbarHostState.showSnackbar(msg)
@@ -393,7 +477,7 @@ fun DriveScreen(
             if (visibleFolders.isEmpty() && visibleFiles.isEmpty()) {
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(vertical = 8.dp),
+                    contentPadding = PaddingValues(top = 8.dp, bottom = 92.dp),
                     verticalArrangement = Arrangement.spacedBy(16.dp),
                 ) {
                     if (currentFolderId == null && searchQuery.isBlank()) {
@@ -416,12 +500,29 @@ fun DriveScreen(
                                 onOpenTrash = onOpenTrash,
                             )
                         }
+                        if (selectedCategory == null &&
+                            ((stats.totalFiles == 0 && stats.totalFolders == 0) ||
+                                settings.channelScanRunning ||
+                                settings.channelScanCursorId > 0L)
+                        ) {
+                            item {
+                                ChannelHistoryQuickImportCard(
+                                    settings = settings,
+                                    isCheckingIndex = isSyncingManifest,
+                                    isImportingJson = isImportingExportJson,
+                                    onStartOrResumeScan = startOrResumeChannelScan,
+                                    onPauseScan = pauseChannelScan,
+                                    onImportExportJson = { exportJsonLauncher.launch(arrayOf("application/json", "*/*")) },
+                                    onCheckCloudIndex = checkOrRestoreCloudIndex,
+                                )
+                            }
+                        }
                     }
                     item {
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(vertical = 56.dp),
+                                .padding(vertical = 32.dp),
                             horizontalAlignment = Alignment.CenterHorizontally,
                         ) {
                             Icon(
@@ -469,6 +570,19 @@ fun DriveScreen(
                                 onOpenStarred = onOpenStarred,
                                 onOpenTrash = onOpenTrash,
                             )
+                        }
+                        if (settings.channelScanRunning || settings.channelScanCursorId > 0L) {
+                            item(key = "active_scan_banner") {
+                                ChannelHistoryQuickImportCard(
+                                    settings = settings,
+                                    isCheckingIndex = isSyncingManifest,
+                                    isImportingJson = isImportingExportJson,
+                                    onStartOrResumeScan = startOrResumeChannelScan,
+                                    onPauseScan = pauseChannelScan,
+                                    onImportExportJson = { exportJsonLauncher.launch(arrayOf("application/json", "*/*")) },
+                                    onCheckCloudIndex = checkOrRestoreCloudIndex,
+                                )
+                            }
                         }
                     }
 

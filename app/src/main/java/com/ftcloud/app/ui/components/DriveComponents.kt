@@ -49,17 +49,21 @@ import androidx.compose.material.icons.outlined.Sync
 import androidx.compose.material.icons.outlined.StarBorder
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -80,6 +84,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
+import com.ftcloud.app.core.model.AppSettings
 import com.ftcloud.app.core.model.DriveFile
 import com.ftcloud.app.core.model.DriveFolder
 import com.ftcloud.app.core.model.DriveStats
@@ -823,5 +828,119 @@ private fun DetailRow(label: String, value: String) {
             text = value,
             style = MaterialTheme.typography.bodyMedium,
         )
+    }
+}
+
+@Composable
+fun ChannelHistoryQuickImportCard(
+    settings: AppSettings,
+    isCheckingIndex: Boolean,
+    isImportingJson: Boolean,
+    onStartOrResumeScan: () -> Unit,
+    onPauseScan: () -> Unit,
+    onImportExportJson: () -> Unit,
+    onCheckCloudIndex: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val hasActiveOrPausedScan = settings.channelScanRunning || settings.channelScanCursorId > 0L
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.65f),
+        ),
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            if (hasActiveOrPausedScan) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Outlined.Sync,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = if (settings.channelScanRunning) {
+                                "Scanning Telegram Channel (Live)…"
+                            } else {
+                                "Channel History Scan Paused"
+                            },
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Text(
+                            text = settings.channelScanStatus
+                                ?: "Imported ${settings.channelScanImportedCount} media items so far.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                if (settings.channelScanMaxId > 0L) {
+                    val progress = (settings.channelScanCheckedCount.toFloat() /
+                        settings.channelScanMaxId.toFloat()).coerceIn(0f, 1f)
+                    LinearProgressIndicator(
+                        progress = { progress },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (settings.channelScanRunning) {
+                        OutlinedButton(
+                            onClick = onPauseScan,
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Text("Pause Scan")
+                        }
+                    } else {
+                        Button(
+                            onClick = onStartOrResumeScan,
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Text("Resume Scan")
+                        }
+                    }
+                }
+            } else {
+                Text(
+                    text = "Already Have Files in Your Channel?",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    text = "Telegram bots can't auto-list old channel history until indexed once. Tap Scan Channel Now (newest-first, so recent media appears in seconds) — FT Cloud pins an index snapshot so future installs & other phones load automatically.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Button(
+                    onClick = onStartOrResumeScan,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Icon(Icons.Outlined.Sync, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Scan Channel Now (One-Time)")
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilledTonalButton(
+                        enabled = !isImportingJson,
+                        onClick = onImportExportJson,
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Text(if (isImportingJson) "Importing…" else "Import result.json")
+                    }
+                    OutlinedButton(
+                        enabled = !isCheckingIndex,
+                        onClick = onCheckCloudIndex,
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Text(if (isCheckingIndex) "Checking…" else "Restore Index")
+                    }
+                }
+            }
+        }
     }
 }

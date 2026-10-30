@@ -2,6 +2,16 @@
 
 All notable changes to **FT Cloud** are documented in this file.
 
+## [1.2.3] - 2026-10-30
+
+### Fixed & Improved
+- **First-Time Login Cloud Index Restore & Multi-Bot Manifest Sync**:
+  - Fixed a multi-bot swarm `file_id` mismatch where `fetchChatWithPinnedMessage()` could query the pinned `#ftcloud_manifest` with Bot B while `CloudManifestSync` downloaded its bot-scoped `file_id` with Bot A (`fetchChatWithBot()` now guarantees the exact same bot downloads the manifest).
+  - Fixed `OnboardingScreen` unmounting before `finishConnectionWithAutoSync()` finished restoring the cloud index on initial login.
+  - Added automatic recent-channel-tail manifest discovery (`findManifestInChannelTail`) + multi-bot pin fallback so existing `#ftcloud_manifest` snapshots are found even if a bot lacked `"Pin messages"` admin permission or another post was pinned later, plus `pinnedManifestMessageId` transfer in QR/PIN pairing payloads.
+- **One-Tap Channel Scan & Live Progress Card on Drive & Photos**:
+  - Added a **Quick Channel Import & Live Scan Card** directly on empty `Drive` and `Photos` screens so first-time channels with pre-existing Telegram media can start the one-time newest-first scan, import `result.json`, or restore an existing index in one tap without hunting in Settings.
+
 ## [1.2.2] - 2026-10-29
 
 ### Improved

@@ -127,10 +127,14 @@ fun FTCloudAppShell(
     pendingShare: IncomingSharePayload?,
     onClearPendingShare: () -> Unit,
 ) {
-    if (!settings.isConfigured) {
+    var holdOnboardingForInitialSync by rememberSaveable { mutableStateOf(false) }
+
+    if (!settings.isConfigured || holdOnboardingForInitialSync) {
         OnboardingScreen(
             container = container,
-            onConnected = {},
+            onSyncStarted = { holdOnboardingForInitialSync = true },
+            onSyncAborted = { holdOnboardingForInitialSync = false },
+            onConnected = { holdOnboardingForInitialSync = false },
         )
         return
     }

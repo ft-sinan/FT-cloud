@@ -57,6 +57,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
@@ -64,7 +65,9 @@ import com.ftcloud.app.core.model.AppSettings
 import com.ftcloud.app.core.model.DriveFile
 import com.ftcloud.app.core.model.FileCategory
 import com.ftcloud.app.core.model.FormatUtils
+import com.ftcloud.app.core.sync.ChannelScanScheduler
 import com.ftcloud.app.di.FTCloudContainer
+import com.ftcloud.app.ui.components.ChannelHistoryQuickImportCard
 import com.ftcloud.app.ui.components.ExpressiveTopBar
 import com.ftcloud.app.ui.components.HeaderCircleButton
 import kotlinx.coroutines.launch
@@ -89,12 +92,38 @@ fun GalleryScreen(
     onOpenPreview: (String) -> Unit,
     onNavigateToBackup: () -> Unit,
 ) {
+    val context = LocalContext.current
     val repo = container.driveRepository
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
 
     var mediaFilter by rememberSaveable { mutableStateOf(GalleryMediaFilter.ALL) }
+    var isCheckingIndex by remember { mutableStateOf(false) }
+    var isImportingJson by remember { mutableStateOf(false) }
     val rawMedia by repo.observeMediaTimeline().collectAsState(initial = emptyList())
+
+    val exportJsonLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument(),
+    ) { uri: Uri? ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        isImportingJson = true
+        scope.launch {
+            runCatching {
+                val summary = context.contentResolver.openInputStream(uri)?.use { stream ->
+                    container.channelMediaImporter.importTelegramExportJson(stream)
+                } ?: error("Unable to read selected JSON file.")
+                runCatching { repo.syncManifestNow() }
+                summary
+            }.onSuccess { summary ->
+                snackbarHostState.showSnackbar(
+                    "Imported ${summary.importedFiles} channel items (${summary.skippedExisting} already indexed)"
+                )
+            }.onFailure { err ->
+                snackbarHostState.showSnackbar(err.message ?: "Failed to import Telegram export JSON")
+            }
+            isImportingJson = false
+        }
+    }
 
     val filteredMedia = remember(rawMedia, mediaFilter) {
         when (mediaFilter) {
@@ -207,6 +236,35 @@ fun GalleryScreen(
                 }
             }
 
+            if (settings.channelScanRunning || settings.channelScanCursorId > 0L) {
+                ChannelHistoryQuickImportCard(
+                    settings = settings,
+                    isCheckingIndex = isCheckingIndex,
+                    isImportingJson = isImportingJson,
+                    onStartOrResumeScan = {
+                        scope.launch {
+                            container.settingsRepository.updateChannelScanState(
+                                running = true,
+                                status = "Starting newest-first channel scan…",
+                            )
+                            ChannelScanScheduler.startOrResume(context)
+                        }
+                    },
+                    onPauseScan = {
+                        scope.launch {
+                            container.settingsRepository.updateChannelScanState(
+                                running = false,
+                                status = "Pausing scanner…",
+                            )
+                            ChannelScanScheduler.cancel(context)
+                        }
+                    },
+                    onImportExportJson = { exportJsonLauncher.launch(arrayOf("application/json", "*/*")) },
+                    onCheckCloudIndex = {},
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
+                )
+            }
+
             if (entries.isEmpty()) {
                 Box(
                     modifier = Modifier.fillMaxSize(),
@@ -214,15 +272,62 @@ fun GalleryScreen(
                 ) {
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier.padding(32.dp),
+                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 24.dp),
                     ) {
+                        if (rawMedia.isEmpty() && !settings.channelScanRunning && settings.channelScanCursorId == 0L) {
+                            ChannelHistoryQuickImportCard(
+                                settings = settings,
+                                isCheckingIndex = isCheckingIndex,
+                                isImportingJson = isImportingJson,
+                                onStartOrResumeScan = {
+                                    scope.launch {
+                                        container.settingsRepository.updateChannelScanState(
+                                            running = true,
+                                            status = "Starting newest-first channel scan…",
+                                        )
+                                        ChannelScanScheduler.startOrResume(context)
+                                    }
+                                },
+                                onPauseScan = {
+                                    scope.launch {
+                                        container.settingsRepository.updateChannelScanState(
+                                            running = false,
+                                            status = "Pausing scanner…",
+                                        )
+                                        ChannelScanScheduler.cancel(context)
+                                    }
+                                },
+                                onImportExportJson = { exportJsonLauncher.launch(arrayOf("application/json", "*/*")) },
+                                onCheckCloudIndex = {
+                                    if (!isCheckingIndex) {
+                                        isCheckingIndex = true
+                                        scope.launch {
+                                            runCatching {
+                                                repo.syncMultiDeviceCloud(forcePull = true, allowTailFallback = true)
+                                            }.onSuccess { merge ->
+                                                val msg = when {
+                                                    merge.addedFiles > 0 -> "Restored +${merge.addedFiles} cloud items!"
+                                                    merge.noRemoteManifest -> "No cloud index saved yet — tap Scan Channel Now."
+                                                    else -> "Cloud index is up to date"
+                                                }
+                                                snackbarHostState.showSnackbar(msg)
+                                            }.onFailure { err ->
+                                                snackbarHostState.showSnackbar(err.message ?: "Restore check failed")
+                                            }
+                                            isCheckingIndex = false
+                                        }
+                                    }
+                                },
+                            )
+                            Spacer(Modifier.height(16.dp))
+                        }
                         Icon(
                             imageVector = Icons.Outlined.PhotoLibrary,
                             contentDescription = null,
                             tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.65f),
-                            modifier = Modifier.size(64.dp),
+                            modifier = Modifier.size(56.dp),
                         )
-                        Spacer(Modifier.height(12.dp))
+                        Spacer(Modifier.height(10.dp))
                         Text("No cloud photos or videos yet", style = MaterialTheme.typography.titleMedium)
                         Spacer(Modifier.height(4.dp))
                         Text(
