@@ -6,6 +6,7 @@ import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
@@ -14,13 +15,13 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -44,7 +45,6 @@ import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -62,9 +62,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -72,6 +76,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.navigation.NavDestination
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavType
@@ -187,64 +192,32 @@ fun FTCloudAppShell(
     }
 
     val topRoutes = TopDestination.entries.map { it.route }.toSet()
-    val showBottomBar = currentDestination?.route in topRoutes
+    val currentRoute = currentDestination?.route
+    val showBottomBar = currentRoute in topRoutes
 
-    Scaffold(
-        modifier = Modifier.fillMaxSize(),
-        bottomBar = {
-            if (showBottomBar) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .navigationBarsPadding()
-                        .padding(horizontal = 12.dp, vertical = 10.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .shadow(14.dp, CircleShape)
-                            .clip(CircleShape)
-                            .background(
-                                if (glassBottomBar) {
-                                    MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.93f)
-                                } else {
-                                    MaterialTheme.colorScheme.surfaceContainer
-                                }
-                            )
-                            .padding(6.dp),
-                    ) {
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(3.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            TopDestination.entries.forEach { dest ->
-                                val selected = currentDestination?.hierarchy?.any { it.route == dest.route } == true
-                                FloatingDockItem(
-                                    icon = if (selected) dest.selectedIcon else dest.unselectedIcon,
-                                    label = dest.label,
-                                    selected = selected,
-                                    badgeCount = if (dest == TopDestination.TRANSFERS) activeTransferCount else 0,
-                                    onClick = {
-                                        navController.navigate(dest.route) {
-                                            popUpTo(navController.graph.findStartDestination().id) {
-                                                saveState = true
-                                            }
-                                            launchSingleTop = true
-                                            restoreState = true
-                                        }
-                                    },
-                                )
-                            }
-                        }
-                    }
+    val dockVisibleState = remember { mutableStateOf(true) }
+    LaunchedEffect(currentRoute) {
+        dockVisibleState.value = true
+    }
+    val dockConnection = remember {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                when {
+                    available.y < -10f -> dockVisibleState.value = false
+                    available.y > 10f -> dockVisibleState.value = true
                 }
+                return Offset.Zero
             }
         }
-    ) { outerPadding ->
+    }
+
+    Box(modifier = Modifier.fillMaxSize()) {
         NavHost(
             navController = navController,
             startDestination = TopDestination.DRIVE.route,
-            modifier = Modifier.padding(bottom = if (showBottomBar) outerPadding.calculateBottomPadding() else 0.dp),
+            modifier = Modifier
+                .fillMaxSize()
+                .nestedScroll(dockConnection),
         ) {
             composable(TopDestination.DRIVE.route) {
                 DriveScreen(
@@ -317,6 +290,26 @@ fun FTCloudAppShell(
                     onBack = { navController.popBackStack() },
                 )
             }
+        }
+
+        if (showBottomBar) {
+            FTCloudFloatingDock(
+                visible = dockVisibleState.value,
+                glass = glassBottomBar,
+                currentDestination = currentDestination,
+                activeTransferCount = activeTransferCount,
+                onSelectDestination = { dest ->
+                    dockVisibleState.value = true
+                    navController.navigate(dest.route) {
+                        popUpTo(navController.graph.findStartDestination().id) {
+                            saveState = true
+                        }
+                        launchSingleTop = true
+                        restoreState = true
+                    }
+                },
+                modifier = Modifier.align(Alignment.BottomCenter),
+            )
         }
     }
 
@@ -406,6 +399,74 @@ fun FTCloudAppShell(
                 }
             }
         )
+    }
+}
+
+/** Orion-style floating glass pill dock overlaid over scrolling screen content. */
+@Composable
+private fun FTCloudFloatingDock(
+    visible: Boolean,
+    glass: Boolean,
+    currentDestination: NavDestination?,
+    activeTransferCount: Int,
+    onSelectDestination: (TopDestination) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val animationsEnabled = LocalAnimationsEnabled.current
+    val translation by animateFloatAsState(
+        targetValue = if (visible) 0f else 150f,
+        animationSpec = if (animationsEnabled) {
+            spring(dampingRatio = 0.82f, stiffness = 300f)
+        } else {
+            snap()
+        },
+        label = "dockTranslation",
+    )
+    val alpha by animateFloatAsState(
+        targetValue = if (visible) 1f else 0f,
+        animationSpec = if (animationsEnabled) tween(180) else snap(),
+        label = "dockAlpha",
+    )
+
+    Box(
+        modifier = modifier
+            .navigationBarsPadding()
+            .padding(horizontal = 10.dp, vertical = 12.dp)
+            .graphicsLayer {
+                translationY = translation.dp.toPx()
+                this.alpha = alpha
+            }
+            .shadow(16.dp, CircleShape)
+            .clip(CircleShape)
+            .background(
+                if (glass) {
+                    MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.88f)
+                } else {
+                    MaterialTheme.colorScheme.surfaceContainerHigh
+                }
+            )
+            .border(
+                width = 1.dp,
+                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f),
+                shape = CircleShape,
+            )
+            .padding(6.dp),
+    ) {
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(3.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            TopDestination.entries.forEach { dest ->
+                val selected = currentDestination?.hierarchy?.any { it.route == dest.route } == true
+                FloatingDockItem(
+                    icon = if (selected) dest.selectedIcon else dest.unselectedIcon,
+                    label = dest.label,
+                    selected = selected,
+                    badgeCount = if (dest == TopDestination.TRANSFERS) activeTransferCount else 0,
+                    onClick = { onSelectDestination(dest) },
+                )
+            }
+        }
     }
 }
 

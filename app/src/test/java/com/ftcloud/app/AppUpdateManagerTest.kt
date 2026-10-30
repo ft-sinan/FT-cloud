@@ -81,36 +81,37 @@ class AppUpdateManagerTest {
     }
 
     @Test
-    fun `private repo HTTP 404 surfaces clear guidance and bearer token succeeds`() = runBlocking {
+    fun `public repo HTTP 404 surfaces clean message and stale token falls back to public release`() = runBlocking {
         val apiServer = MockWebServer()
         apiServer.start()
         try {
-            // 1. Unauthenticated 404 -> actionable Private repository explanation
+            // 1. Unauthenticated 404 -> clean public-repo release message (no false 'Private Repo' prompt)
             apiServer.enqueue(MockResponse().setResponseCode(404))
             try {
                 AppUpdateManager.fetchLatestRelease(url = apiServer.url("/releases/latest").toString())
                 fail("Expected HTTP 404 error")
             } catch (err: IllegalStateException) {
-                assertTrue(err.message.orEmpty().contains("Private"))
-                assertTrue(err.message.orEmpty().contains("Public"))
+                assertTrue(err.message.orEmpty().contains("404"))
+                assertFalse(err.message.orEmpty().contains("Private"))
             }
             val unauthReq = apiServer.takeRequest()
             assertNull(unauthReq.getHeader("Authorization"))
 
-            // 2. Authenticated with fine-grained token -> sends Bearer header and parses release
+            // 2. Stale/expired token returns 401 -> automatically falls back to unauthenticated public release
+            apiServer.enqueue(MockResponse().setResponseCode(401))
             apiServer.enqueue(
                 MockResponse()
                     .setResponseCode(200)
                     .setBody(
                         """
                         {
-                          "tag_name": "v1.2.1",
-                          "name": "FT Cloud v1.2.1",
+                          "tag_name": "v1.2.5",
+                          "name": "FT Cloud v1.2.5",
                           "assets": [
                             {
-                              "name": "FTCloud-v1.2.1.apk",
-                              "url": "${apiServer.url("/assets/102")}",
-                              "browser_download_url": "${apiServer.url("/download/FTCloud-v1.2.1.apk")}",
+                              "name": "FTCloud-v1.2.5.apk",
+                              "url": "${apiServer.url("/assets/105")}",
+                              "browser_download_url": "${apiServer.url("/download/FTCloud-v1.2.5.apk")}",
                               "size": 4096
                             }
                           ]
@@ -120,11 +121,13 @@ class AppUpdateManagerTest {
             )
             val release = AppUpdateManager.fetchLatestRelease(
                 url = apiServer.url("/releases/latest").toString(),
-                githubToken = "github_pat_test123",
+                githubToken = "github_pat_expired",
             )
-            val authReq = apiServer.takeRequest()
-            assertEquals("Bearer github_pat_test123", authReq.getHeader("Authorization"))
-            assertEquals("1.2.1", release.versionName)
+            val firstReq = apiServer.takeRequest()
+            assertEquals("Bearer github_pat_expired", firstReq.getHeader("Authorization"))
+            val fallbackReq = apiServer.takeRequest()
+            assertNull(fallbackReq.getHeader("Authorization"))
+            assertEquals("1.2.5", release.versionName)
         } finally {
             apiServer.shutdown()
         }

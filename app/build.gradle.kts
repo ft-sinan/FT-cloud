@@ -34,8 +34,8 @@ android {
         applicationId = "com.ftcloud.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 7
-        versionName = "1.2.4"
+        versionCode = 8
+        versionName = "1.2.5"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -43,10 +43,16 @@ android {
         }
     }
 
+    val releaseSigning = signingConfigs.findByName("release")
+    val unifiedSigning = if (releaseSigning?.storeFile != null) {
+        releaseSigning
+    } else {
+        signingConfigs.getByName("debug")
+    }
+
     buildTypes {
         debug {
-            applicationIdSuffix = ".debug"
-            versionNameSuffix = "-debug"
+            signingConfig = unifiedSigning
         }
         release {
             isMinifyEnabled = true
@@ -55,12 +61,7 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            val releaseSigning = signingConfigs.findByName("release")
-            signingConfig = if (releaseSigning?.storeFile != null) {
-                releaseSigning
-            } else {
-                signingConfigs.getByName("debug")
-            }
+            signingConfig = unifiedSigning
         }
     }
 

@@ -34,6 +34,8 @@ jobs:
         with:
           path: ~/.android/debug.keystore
           key: ftcloud-signing-keystore-v1
+          restore-keys: |
+            ftcloud-signing-keystore-
 
       - name: Configure APK signing credentials
         shell: bash
@@ -84,7 +86,7 @@ jobs:
           set -o pipefail
           ./gradlew testDebugUnitTest --stacktrace 2>&1 | tee -a gradle-ci.log
 
-      - name: Assemble Debug & Signed Release APKs
+      - name: Assemble Signed APK
         shell: bash
         env:
           FTCLOUD_RELEASE_STORE_PASSWORD: ${{ secrets.FTCLOUD_RELEASE_STORE_PASSWORD }}
@@ -98,7 +100,7 @@ jobs:
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
           set -o pipefail
-          ./gradlew assembleDebug assembleRelease --stacktrace 2>&1 | tee -a gradle-ci.log
+          ./gradlew assembleRelease --stacktrace 2>&1 | tee -a gradle-ci.log
 
       - name: Run Android Lint
         shell: bash
@@ -156,16 +158,10 @@ jobs:
           echo "RELEASE_TAG=${release_tag}" >> "$GITHUB_ENV"
           echo "APK_NAME=${apk_name}" >> "$GITHUB_ENV"
 
-      - name: Upload Debug APK artifact
+      - name: Upload Signed FT Cloud APK & SHA-256 artifact
         uses: actions/upload-artifact@v4
         with:
-          name: FT-Cloud-Debug-APK
-          path: app/build/outputs/apk/debug/*.apk
-
-      - name: Upload Signed Release APK & SHA-256 artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: FT-Cloud-Release-APK
+          name: FT-Cloud-APK
           path: |
             release-assets/*.apk
             release-assets/*.sha256

@@ -25,6 +25,10 @@
     <!-- Opens Android's package installer after downloading a verified GitHub Release APK -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
+    <queries>
+        <package android:name="com.ftcloud.app" />
+    </queries>
+
     <application
         android:name=".FTCloudApplication"
         android:allowBackup="false"

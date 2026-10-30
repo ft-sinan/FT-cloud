@@ -47,6 +47,8 @@ jobs:
         with:
           path: ~/.android/debug.keystore
           key: ftcloud-signing-keystore-v1
+          restore-keys: |
+            ftcloud-signing-keystore-
 
       - name: Validate release tag & configure signing keystore
         shell: bash

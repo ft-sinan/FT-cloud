@@ -14,10 +14,12 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -306,13 +308,21 @@ fun SettingsScreen(
     }
 
     Scaffold(
-        snackbarHost = { SnackbarHost(snackbarHostState) },
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
+        snackbarHost = {
+            SnackbarHost(
+                hostState = snackbarHostState,
+                modifier = Modifier
+                    .navigationBarsPadding()
+                    .padding(bottom = 84.dp),
+            )
+        },
     ) { innerPadding ->
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(bottom = innerPadding.calculateBottomPadding()),
-            contentPadding = PaddingValues(bottom = 20.dp),
+                .padding(innerPadding),
+            contentPadding = PaddingValues(bottom = 128.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             item {
@@ -1721,17 +1731,10 @@ private fun AppUpdateCard(
                 Column(modifier = Modifier.weight(1f)) {
                     Text("App Updates", style = MaterialTheme.typography.titleMedium)
                     Text(
-                        text = if (hasPrivateRepoToken) {
-                            "Installed: v${BuildConfig.VERSION_NAME} • Private-repo token active"
-                        } else {
-                            "Installed: v${BuildConfig.VERSION_NAME} (code ${BuildConfig.VERSION_CODE}) • Seamless in-place APK upgrades"
-                        },
+                        text = "Installed: v${BuildConfig.VERSION_NAME} • GitHub Releases",
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                }
-                TextButton(onClick = onConfigurePrivateRepoToken) {
-                    Text(if (hasPrivateRepoToken) "Token ✓" else "Private Repo")
                 }
             }
 
@@ -1885,6 +1888,7 @@ private fun AppUpdateCard(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.error,
                     )
+                    val isAuthError = status.errorText.contains("401") || status.errorText.contains("403")
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         OutlinedButton(
                             onClick = onCheck,
@@ -1892,11 +1896,13 @@ private fun AppUpdateCard(
                         ) {
                             Text("Retry Check")
                         }
-                        FilledTonalButton(
-                            onClick = onConfigurePrivateRepoToken,
-                            modifier = Modifier.weight(1f),
-                        ) {
-                            Text(if (hasPrivateRepoToken) "Edit Repo Token" else "Private Repo Token")
+                        if (isAuthError || hasPrivateRepoToken) {
+                            FilledTonalButton(
+                                onClick = onConfigurePrivateRepoToken,
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                Text(if (hasPrivateRepoToken) "Edit Token" else "GitHub Token")
+                            }
                         }
                     }
                 }

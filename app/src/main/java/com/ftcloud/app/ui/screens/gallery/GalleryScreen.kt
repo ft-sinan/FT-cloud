@@ -163,7 +163,12 @@ fun GalleryScreen(
     val columns = settings.galleryColumns.coerceIn(2, 4)
 
     Scaffold(
-        snackbarHost = { SnackbarHost(snackbarHostState) },
+        snackbarHost = {
+            SnackbarHost(
+                hostState = snackbarHostState,
+                modifier = Modifier.padding(bottom = 84.dp),
+            )
+        },
         topBar = {
             ExpressiveTopBar(
                 content = {
@@ -211,7 +216,8 @@ fun GalleryScreen(
                     mediaPickerLauncher.launch(
                         PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)
                     )
-                }
+                },
+                modifier = Modifier.padding(bottom = 80.dp),
             ) {
                 Icon(Icons.Outlined.AddPhotoAlternate, contentDescription = "Upload photos or videos")
             }
@@ -220,7 +226,7 @@ fun GalleryScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(innerPadding),
+                .padding(top = innerPadding.calculateTopPadding()),
         ) {
             LazyRow(
                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
@@ -341,7 +347,12 @@ fun GalleryScreen(
                 LazyVerticalGrid(
                     columns = GridCells.Fixed(columns),
                     modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
+                    contentPadding = PaddingValues(
+                        start = 8.dp,
+                        top = 8.dp,
+                        end = 8.dp,
+                        bottom = 164.dp,
+                    ),
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {

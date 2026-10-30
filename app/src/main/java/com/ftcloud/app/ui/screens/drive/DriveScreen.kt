@@ -267,7 +267,12 @@ fun DriveScreen(
     }
 
     Scaffold(
-        snackbarHost = { SnackbarHost(snackbarHostState) },
+        snackbarHost = {
+            SnackbarHost(
+                hostState = snackbarHostState,
+                modifier = Modifier.padding(bottom = 84.dp),
+            )
+        },
         topBar = {
             if (isSelectionMode) {
                 TopAppBar(
@@ -408,6 +413,7 @@ fun DriveScreen(
                     onClick = { showAddSheet = true },
                     icon = { Icon(Icons.Outlined.Add, contentDescription = null) },
                     text = { Text("New") },
+                    modifier = Modifier.padding(bottom = 80.dp),
                 )
             }
         }
@@ -415,7 +421,7 @@ fun DriveScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(innerPadding)
+                .padding(top = innerPadding.calculateTopPadding())
                 .padding(horizontal = 16.dp),
         ) {
             OutlinedTextField(
@@ -477,7 +483,7 @@ fun DriveScreen(
             if (visibleFolders.isEmpty() && visibleFiles.isEmpty()) {
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(top = 8.dp, bottom = 92.dp),
+                    contentPadding = PaddingValues(top = 8.dp, bottom = 164.dp),
                     verticalArrangement = Arrangement.spacedBy(16.dp),
                 ) {
                     if (currentFolderId == null && searchQuery.isBlank()) {
@@ -548,7 +554,7 @@ fun DriveScreen(
             } else if (settings.viewMode == DriveViewMode.LIST) {
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(top = 6.dp, bottom = 92.dp),
+                    contentPadding = PaddingValues(top = 6.dp, bottom = 164.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     if (currentFolderId == null && searchQuery.isBlank() && selectedCategory == null) {
@@ -661,7 +667,7 @@ fun DriveScreen(
                 LazyVerticalGrid(
                     columns = GridCells.Fixed(2),
                     modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(top = 6.dp, bottom = 92.dp),
+                    contentPadding = PaddingValues(top = 6.dp, bottom = 164.dp),
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {

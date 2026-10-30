@@ -2,6 +2,17 @@
 
 All notable changes to **FT Cloud** are documented in this file.
 
+## [1.2.5] - 2026-10-30
+
+### Fixed & Improved
+- **Single Unified App Build & Seamless In-Place APK Updates**:
+  - Removed the separate `.debug` `applicationIdSuffix` (`com.ftcloud.app.debug` / `FT Cloud (Debug)`) and separate CI debug APK artifact so FT Cloud ships a **single unified package (`com.ftcloud.app`, `FT Cloud`)** signed with one consistent certificate (`ftcloud-signing-keystore-v1`) across every build.
+  - Added `<queries>` package visibility for `com.ftcloud.app` on Android 11+ and automatic unauthenticated public-release fallback if any previously stored GitHub token is stale, ensuring one-tap in-place upgrades from `v1.2.4` onward with zero uninstalls.
+- **Clean Public-Repo Update Checker UI**:
+  - Removed the `"Private Repo"` button from **Settings → App Updates** now that `ft-sinan/FT-cloud` is Public on GitHub.
+- **True Floating Glass Bottom Tab Dock**:
+  - Replaced the clipped `Scaffold(bottomBar = ...)` layout in `FTCloudAppShell` with an edge-to-edge full-screen `Box` + `FTCloudFloatingDock` overlay (`VaultFloatingDock` style) with scroll-hide/reveal spring physics, glass translucency, and elevated FAB/list bottom clearances so files, photos, transfers, backup cards, and settings scroll smoothly *underneath* the floating pill.
+
 ## [1.2.4] - 2026-10-30
 
 ### Fixed & Improved
