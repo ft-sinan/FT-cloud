@@ -1636,6 +1636,7 @@ private fun AppUpdateCard(
     onConfigurePrivateRepoToken: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val context = LocalContext.current
     Card(
         modifier = modifier.fillMaxWidth(),
         shape = RoundedCornerShape(22.dp),
