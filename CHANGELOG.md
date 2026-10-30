@@ -2,6 +2,14 @@
 
 All notable changes to **FT Cloud** are documented in this file.
 
+## [1.2.6] - 2026-10-30
+
+### Fixed & Improved
+- **Permanent Immutable APK Signing Keystore (`app/signing/ftcloud-signing.p12`)**:
+  - Fixed the root cause of why `v1.2.4 → v1.2.5` still reported a signing key mismatch: Android Gradle Plugin 8.7+ on Linux generates its default `debug` keystore at `$XDG_CONFIG_HOME/.android/debug.keystore` (`~/.config/.android/debug.keystore`) instead of `~/.android/debug.keystore`, which caused every fresh GitHub Actions runner to sign releases with a brand-new ephemeral certificate even when `~/.android/debug.keystore` was cached.
+  - Added a permanent, deterministic PKCS#12 signing keystore (`app/signing/ftcloud-signing.p12`, SHA-256 `59:1B:F0:DF:...`) wired directly into `app/build.gradle.kts` across all build types and verified by `apksigner verify --print-certs` in CI on every build — guaranteeing that once `v1.2.6` is installed, **every future FT Cloud update upgrades seamlessly in-place forever** across all branches, runners, and cache resets.
+  - Includes all `v1.2.5` improvements: single unified app identity (`com.ftcloud.app` / `FT Cloud`), clean public-repo **App Updates** card (no `"Private Repo"` button), and the true **Floating Glass Tab Dock** (`FTCloudFloatingDock`) overlaid over edge-to-edge scrolling screens.
+
 ## [1.2.5] - 2026-10-30
 
 ### Fixed & Improved

@@ -15,17 +15,37 @@ android {
             val keystorePath = System.getenv("FTCLOUD_RELEASE_STORE_FILE")
                 ?: System.getenv("MYVAULT_RELEASE_STORE_FILE")
                 ?: System.getenv("KEYSTORE_PATH")
-            if (!keystorePath.isNullOrBlank() && file(keystorePath).exists()) {
-                storeFile = file(keystorePath)
-                storePassword = System.getenv("FTCLOUD_RELEASE_STORE_PASSWORD")
+            val envStorePassword = (
+                System.getenv("FTCLOUD_RELEASE_STORE_PASSWORD")
                     ?: System.getenv("MYVAULT_RELEASE_STORE_PASSWORD")
                     ?: System.getenv("KEY_STORE_PASSWORD")
-                keyAlias = System.getenv("FTCLOUD_RELEASE_KEY_ALIAS")
+                )?.takeIf { it.isNotBlank() }
+            val envKeyAlias = (
+                System.getenv("FTCLOUD_RELEASE_KEY_ALIAS")
                     ?: System.getenv("MYVAULT_RELEASE_KEY_ALIAS")
                     ?: System.getenv("KEY_ALIAS")
-                keyPassword = System.getenv("FTCLOUD_RELEASE_KEY_PASSWORD")
+                )?.takeIf { it.isNotBlank() }
+            val envKeyPassword = (
+                System.getenv("FTCLOUD_RELEASE_KEY_PASSWORD")
                     ?: System.getenv("MYVAULT_RELEASE_KEY_PASSWORD")
                     ?: System.getenv("KEY_PASSWORD")
+                )?.takeIf { it.isNotBlank() }
+
+            if (!keystorePath.isNullOrBlank() && file(keystorePath).exists() &&
+                envStorePassword != null && envKeyAlias != null
+            ) {
+                storeFile = file(keystorePath)
+                storePassword = envStorePassword
+                keyAlias = envKeyAlias
+                keyPassword = envKeyPassword ?: envStorePassword
+            } else {
+                // Permanent deterministic repository keystore (SHA-256: 59:1B:F0:DF:...)
+                // Never falls back to AGP's ephemeral ~/.config/.android/debug.keystore
+                storeFile = file("signing/ftcloud-signing.p12")
+                storeType = "PKCS12"
+                storePassword = "ftcloudrelease"
+                keyAlias = "ftcloud"
+                keyPassword = "ftcloudrelease"
             }
         }
     }
@@ -34,8 +54,8 @@ android {
         applicationId = "com.ftcloud.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 8
-        versionName = "1.2.5"
+        versionCode = 9
+        versionName = "1.2.6"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -43,12 +63,7 @@ android {
         }
     }
 
-    val releaseSigning = signingConfigs.findByName("release")
-    val unifiedSigning = if (releaseSigning?.storeFile != null) {
-        releaseSigning
-    } else {
-        signingConfigs.getByName("debug")
-    }
+    val unifiedSigning = signingConfigs.getByName("release")
 
     buildTypes {
         debug {

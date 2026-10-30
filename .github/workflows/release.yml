@@ -42,14 +42,6 @@ jobs:
           java-version: "17"
           cache: gradle
 
-      - name: Restore persistent fallback signing keystore
-        uses: actions/cache@v4
-        with:
-          path: ~/.android/debug.keystore
-          key: ftcloud-signing-keystore-v1
-          restore-keys: |
-            ftcloud-signing-keystore-
-
       - name: Validate release tag & configure signing keystore
         shell: bash
         env:
@@ -76,18 +68,7 @@ jobs:
             test -s "$keystore_path"
             echo "FTCLOUD_RELEASE_STORE_FILE=$keystore_path" >> "$GITHUB_ENV"
           else
-            mkdir -p ~/.android
-            if [[ ! -s ~/.android/debug.keystore ]]; then
-              keytool -genkeypair -v \
-                -keystore ~/.android/debug.keystore \
-                -storepass android \
-                -alias androiddebugkey \
-                -keypass android \
-                -keyalg RSA \
-                -keysize 2048 \
-                -validity 10000 \
-                -dname "CN=FT Cloud,OU=Mobile,O=FT,C=IN"
-            fi
+            test -s app/signing/ftcloud-signing.p12
           fi
           echo "APP_VERSION=$app_version" >> "$GITHUB_ENV"
 

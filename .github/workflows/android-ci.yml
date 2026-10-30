@@ -29,29 +29,12 @@ jobs:
           distribution: "temurin"
           cache: "gradle"
 
-      - name: Restore persistent fallback signing keystore
-        uses: actions/cache@v4
-        with:
-          path: ~/.android/debug.keystore
-          key: ftcloud-signing-keystore-v1
-          restore-keys: |
-            ftcloud-signing-keystore-
-
       - name: Configure APK signing credentials
         shell: bash
         env:
           FTCLOUD_RELEASE_KEYSTORE_BASE64: ${{ secrets.FTCLOUD_RELEASE_KEYSTORE_BASE64 }}
-          FTCLOUD_RELEASE_STORE_PASSWORD: ${{ secrets.FTCLOUD_RELEASE_STORE_PASSWORD }}
-          FTCLOUD_RELEASE_KEY_ALIAS: ${{ secrets.FTCLOUD_RELEASE_KEY_ALIAS }}
-          FTCLOUD_RELEASE_KEY_PASSWORD: ${{ secrets.FTCLOUD_RELEASE_KEY_PASSWORD }}
           MYVAULT_RELEASE_KEYSTORE_BASE64: ${{ secrets.MYVAULT_RELEASE_KEYSTORE_BASE64 }}
-          MYVAULT_RELEASE_STORE_PASSWORD: ${{ secrets.MYVAULT_RELEASE_STORE_PASSWORD }}
-          MYVAULT_RELEASE_KEY_ALIAS: ${{ secrets.MYVAULT_RELEASE_KEY_ALIAS }}
-          MYVAULT_RELEASE_KEY_PASSWORD: ${{ secrets.MYVAULT_RELEASE_KEY_PASSWORD }}
           SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
-          KEY_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
           set -euo pipefail
           keystore_b64="${FTCLOUD_RELEASE_KEYSTORE_BASE64:-${MYVAULT_RELEASE_KEYSTORE_BASE64:-${SIGNING_KEY:-}}}"
@@ -60,21 +43,12 @@ jobs:
             printf '%s' "$keystore_b64" | base64 --decode > "$keystore_path"
             test -s "$keystore_path"
             echo "FTCLOUD_RELEASE_STORE_FILE=$keystore_path" >> "$GITHUB_ENV"
+            echo "USING_CUSTOM_SIGNING_SECRET=true" >> "$GITHUB_ENV"
             echo "Using configured repository release keystore secret."
           else
-            mkdir -p ~/.android
-            if [[ ! -s ~/.android/debug.keystore ]]; then
-              keytool -genkeypair -v \
-                -keystore ~/.android/debug.keystore \
-                -storepass android \
-                -alias androiddebugkey \
-                -keypass android \
-                -keyalg RSA \
-                -keysize 2048 \
-                -validity 10000 \
-                -dname "CN=FT Cloud,OU=Mobile,O=FT,C=IN"
-            fi
-            echo "Using persistent cached keystore (~/.android/debug.keystore) for consistent in-place APK updates."
+            test -s app/signing/ftcloud-signing.p12
+            echo "USING_CUSTOM_SIGNING_SECRET=false" >> "$GITHUB_ENV"
+            echo "Using permanent repository keystore (app/signing/ftcloud-signing.p12) for immutable X.509 signing."
           fi
 
       - name: Make gradlew executable
@@ -141,8 +115,15 @@ jobs:
           )
 
           apksigner_bin="$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -n 1)"
-          if [[ -n "$apksigner_bin" ]]; then
-            "$apksigner_bin" verify --print-certs "release-assets/${apk_name}"
+          test -n "$apksigner_bin"
+          cert_out="$("$apksigner_bin" verify --print-certs "release-assets/${apk_name}")"
+          echo "$cert_out"
+          if [[ "${USING_CUSTOM_SIGNING_SECRET:-false}" != "true" ]]; then
+            expected_sha256="591bf0df43a23deeebe1761021d0b1863fec4d147a22caddcbae39ccdb225a08"
+            if ! echo "$cert_out" | grep -qi "$expected_sha256"; then
+              echo "::error title=SigningMismatch::APK signing certificate did not match permanent keystore ($expected_sha256)!"
+              exit 1
+            fi
           fi
 
           awk -v version="$app_version" '
