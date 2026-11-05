@@ -2,6 +2,15 @@
 
 All notable changes to **FT Cloud** are documented in this file.
 
+## [1.3.0] - 2026-11-05
+
+### Added & Improved
+- **Orion Store-Inspired Expressive UI Overhaul (Theme, Settings Hub, Creator Space & Overall App)**:
+  - **Orion Settings Hub & Multi-Page Architecture**: Rebuilt Settings into an expressive Hub with spring-morphing **Quick Toggle** pills (`36.dp ↔ 22.dp` corners for Biometric Unlock, Wallpaper Colours, Haptic Feedback, Glass Dock, Animations, and Compact Mode) and an asymmetric pastel **Bento Grid** (`Appearance`, `Swarm & Sync`, `Security`, `Collections`, `Storage & Updates`, and `Motion & Feel`) with directional slide transitions and `ExpressiveHeroHeader` subpages.
+  - **Interactive 3D Creator Space (`@ft-sinan`)**: Added the full-width **Creator Space** stage featuring an interactive 3D touch-tilt & flip **Creator Coin** (`"S"` monogram front with diagonal shine band, cloud emblem back, and 3 orbiting badges), expandable creator badges, version/platform stats, one-tap & long-press-to-copy connect tiles (`GitHub`, `Telegram`, `WhatsApp`, `Email`), `Sinanmk.my.id` card, and **Acknowledgements & licences** crediting **Orion Store**.
+  - **Live Theme Studio (`Appearance`)**: Added 4 interactive mini-phone theme previews (`System`, `Light`, `Dark`, and true-black `OLED`) and 9 split-circle brand palette swatches (`Orion`, `Vault Teal`, `Navy`, `Emerald`, `Indigo`, `Ocean`, `Grape`, `Cocoa`, and `Slate`) alongside Android 12+ Material You wallpaper colours.
+  - **Overall App Harmonization**: Upgraded Drive (`StorageOverviewCard` hero banner with spinning morphing blobs + stat strip, `26.dp` `surfaceContainerLow` folder/file cards with vertical category bars & `MorphingShapeBox` pastel badges, borderless pill search, and expressive `"New"` sheet), Gallery, Transfers, Auto Backup, Starred, Trash, Onboarding, Preview, Floating Dock transitions, and Biometric Lock — while preserving the classic FT Cloud launcher icon and permanent `ftcloud-signing.p12` release certificate for seamless in-place updates from `v1.2.6`.
+
 ## [1.2.6] - 2026-10-30
 
 ### Fixed & Improved

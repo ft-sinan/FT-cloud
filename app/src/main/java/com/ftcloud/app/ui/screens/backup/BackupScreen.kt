@@ -59,6 +59,7 @@ import com.ftcloud.app.core.model.FormatUtils
 import com.ftcloud.app.core.sync.BackupScheduler
 import com.ftcloud.app.di.FTCloudContainer
 import com.ftcloud.app.ui.components.ExpressiveHeroHeader
+import com.ftcloud.app.ui.components.OrionSectionCard
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -230,13 +231,12 @@ fun BackupScreen(
             }
 
             item {
-                Card(
+                OrionSectionCard(
+                    title = "Media & network rules",
+                    icon = Icons.Outlined.Backup,
                     modifier = Modifier.padding(horizontal = 16.dp),
-                    shape = RoundedCornerShape(20.dp),
                 ) {
-                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("Media & Network Rules", style = MaterialTheme.typography.titleMedium)
-
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         SettingSwitchRow(
                             title = "Back up Camera & Photos",
                             subtitle = "Upload uncompressed photos to /Auto Backup/Photos",
@@ -322,7 +322,10 @@ fun BackupScreen(
                 items(settings.backupFolders, key = { it.uriString }) { folder ->
                     Card(
                         modifier = Modifier.padding(horizontal = 16.dp),
-                        shape = RoundedCornerShape(16.dp),
+                        shape = RoundedCornerShape(24.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+                        ),
                     ) {
                         Row(
                             modifier = Modifier

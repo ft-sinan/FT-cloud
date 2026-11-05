@@ -26,6 +26,7 @@ import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.SwapVert
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -47,6 +48,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -57,6 +59,10 @@ import com.ftcloud.app.core.model.TransferTask
 import com.ftcloud.app.di.FTCloudContainer
 import com.ftcloud.app.ui.components.ExpressiveTopBar
 import com.ftcloud.app.ui.components.HeaderCircleButton
+import com.ftcloud.app.ui.components.MorphingShapeBox
+import com.ftcloud.app.ui.components.OrionEmptyState
+import com.ftcloud.app.ui.components.expressivePastel
+import com.ftcloud.app.ui.components.readableContentColor
 import kotlinx.coroutines.launch
 
 private enum class TransferTab(val label: String) {
@@ -135,21 +141,11 @@ fun TransfersScreen(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(
-                            imageVector = Icons.Outlined.SwapVert,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.65f),
-                            modifier = Modifier.size(64.dp),
-                        )
-                        Spacer(Modifier.height(10.dp))
-                        Text("No transfers in this view", style = MaterialTheme.typography.titleMedium)
-                        Text(
-                            "Multi-chunk Bot Swarm uploads and downloads appear here.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
+                    OrionEmptyState(
+                        icon = Icons.Outlined.SwapVert,
+                        title = "No transfers in this view",
+                        subtitle = "Parallel multi-chunk Bot Swarm uploads and downloads appear live right here.",
+                    )
                 }
             } else {
                 LazyColumn(
@@ -183,26 +179,42 @@ private fun TransferTaskCard(
     onResumeOrRetry: () -> Unit,
     onCancel: () -> Unit,
 ) {
+    val seed = if (task.direction == TransferDirection.UPLOAD) Color(0xFF4C4ECD) else Color(0xFF0077A8)
+    val pastel = expressivePastel(seed)
+    val ink = readableContentColor(pastel)
+
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(26.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        ),
     ) {
-        Column(modifier = Modifier.padding(14.dp)) {
+        Column(modifier = Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    imageVector = if (task.direction == TransferDirection.UPLOAD) {
-                        Icons.Outlined.CloudUpload
-                    } else {
-                        Icons.Outlined.CloudDownload
-                    },
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
-                )
-                Spacer(Modifier.width(10.dp))
+                MorphingShapeBox(
+                    modifier = Modifier.size(46.dp),
+                    color = pastel,
+                    lobes = 9,
+                    wave = 0.13f,
+                ) {
+                    Icon(
+                        imageVector = if (task.direction == TransferDirection.UPLOAD) {
+                            Icons.Outlined.CloudUpload
+                        } else {
+                            Icons.Outlined.CloudDownload
+                        },
+                        contentDescription = null,
+                        tint = ink,
+                        modifier = Modifier.size(22.dp),
+                    )
+                }
+                Spacer(Modifier.width(12.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = task.fileName,
                         style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )

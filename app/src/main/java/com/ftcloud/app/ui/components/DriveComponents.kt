@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -96,32 +97,33 @@ fun CategoryIconBadge(
     category: FileCategory,
     modifier: Modifier = Modifier,
 ) {
-    val (icon, tint, bg) = categoryVisuals(category)
-    Box(
-        modifier = modifier
-            .size(44.dp)
-            .clip(RoundedCornerShape(12.dp))
-            .background(bg),
-        contentAlignment = Alignment.Center,
+    val (icon, seed, _) = categoryVisuals(category)
+    val pastel = expressivePastel(seed)
+    val ink = readableContentColor(pastel)
+    MorphingShapeBox(
+        modifier = modifier.size(48.dp),
+        color = pastel,
+        lobes = 9,
+        wave = 0.13f,
     ) {
         Icon(
             imageVector = icon,
             contentDescription = category.label,
-            tint = tint,
-            modifier = Modifier.size(24.dp),
+            tint = ink,
+            modifier = Modifier.size(23.dp),
         )
     }
 }
 
 fun categoryVisuals(category: FileCategory): Triple<ImageVector, Color, Color> = when (category) {
-    FileCategory.IMAGE -> Triple(Icons.Outlined.Image, Color(0xFF0B6EFD), Color(0x1F0B6EFD))
-    FileCategory.VIDEO -> Triple(Icons.Outlined.Movie, Color(0xFFE53935), Color(0x1FE53935))
-    FileCategory.AUDIO -> Triple(Icons.Outlined.AudioFile, Color(0xFF8E24AA), Color(0x1F8E24AA))
-    FileCategory.PDF -> Triple(Icons.Outlined.PictureAsPdf, Color(0xFFD84315), Color(0x1FD84315))
-    FileCategory.DOCUMENT -> Triple(Icons.Outlined.Description, Color(0xFF1565C0), Color(0x1F1565C0))
-    FileCategory.CODE -> Triple(Icons.Outlined.Code, Color(0xFF00897B), Color(0x1F00897B))
-    FileCategory.ARCHIVE -> Triple(Icons.Outlined.Archive, Color(0xFFF57C00), Color(0x1FF57C00))
-    FileCategory.OTHER -> Triple(Icons.AutoMirrored.Outlined.InsertDriveFile, Color(0xFF546E7A), Color(0x1F546E7A))
+    FileCategory.IMAGE -> Triple(Icons.Outlined.Image, Color(0xFF4C4ECD), Color(0x1F4C4ECD))
+    FileCategory.VIDEO -> Triple(Icons.Outlined.Movie, Color(0xFFD63865), Color(0x1FD63865))
+    FileCategory.AUDIO -> Triple(Icons.Outlined.AudioFile, Color(0xFF6B48BC), Color(0x1F6B48BC))
+    FileCategory.PDF -> Triple(Icons.Outlined.PictureAsPdf, Color(0xFFC65D00), Color(0x1FC65D00))
+    FileCategory.DOCUMENT -> Triple(Icons.Outlined.Description, Color(0xFF0077A8), Color(0x1F0077A8))
+    FileCategory.CODE -> Triple(Icons.Outlined.Code, Color(0xFF087A4E), Color(0x1F087A4E))
+    FileCategory.ARCHIVE -> Triple(Icons.Outlined.Archive, Color(0xFFB36B00), Color(0x1FB36B00))
+    FileCategory.OTHER -> Triple(Icons.AutoMirrored.Outlined.InsertDriveFile, Color(0xFF4A6074), Color(0x1F4A6074))
 }
 
 @Composable
@@ -135,76 +137,139 @@ fun StorageOverviewCard(
     onOpenTrash: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Card(
-        modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.65f),
-        ),
+    val heroSeed = MaterialTheme.colorScheme.primary
+    val containerColor = expressivePastel(heroSeed)
+    val contentColor = readableContentColor(containerColor)
+    val mutedColor = contentColor.copy(alpha = 0.74f)
+    val shape = RoundedCornerShape(30.dp)
+
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .background(containerColor),
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
-                modifier = Modifier.fillMaxWidth(),
+        MorphingShapeBox(
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .offset(x = 24.dp, y = (-26).dp)
+                .size(116.dp),
+            color = heroSeed.copy(alpha = 0.16f),
+            lobes = 12,
+            wave = 0.17f,
+            spinMillis = 28_000,
+        )
+        MorphingShapeBox(
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .offset(x = (-18).dp, y = (-42).dp)
+                .size(44.dp),
+            color = heroSeed.copy(alpha = 0.12f),
+            lobes = 9,
+            wave = 0.14f,
+            spinMillis = 20_000,
+        )
+
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 18.dp),
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                    Icon(
-                        imageVector = Icons.Outlined.CloudDone,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    ExpressiveChip(
+                        text = "$botCount-BOT SWARM",
+                        icon = Icons.Outlined.CloudDone,
+                        containerColor = contentColor.copy(alpha = 0.10f),
+                        contentColor = contentColor,
                     )
-                    Spacer(Modifier.width(10.dp))
-                    Column {
-                        Text(
-                            text = channelTitle.ifBlank { "Telegram Cloud Drive" },
-                            style = MaterialTheme.typography.titleMedium,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        Text(
-                            text = "${FormatUtils.formatBytes(stats.totalBytes)} used • Unlimited storage • $botCount swarm ${if (botCount == 1) "bot" else "bots"}",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    Spacer(Modifier.weight(1f))
+                    FilledTonalIconButton(
+                        onClick = onSyncManifest,
+                        enabled = !isSyncingManifest,
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.Sync,
+                            contentDescription = "Sync Cloud Index",
                         )
                     }
                 }
-                FilledTonalIconButton(
-                    onClick = onSyncManifest,
-                    enabled = !isSyncingManifest,
-                ) {
-                    Icon(
-                        imageVector = Icons.Outlined.Sync,
-                        contentDescription = "Sync Cloud Index",
-                    )
-                }
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    text = channelTitle.ifBlank { "Telegram Cloud Drive" },
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = contentColor,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    text = "${FormatUtils.formatBytes(stats.totalBytes)} stored · ${stats.totalFiles} ${if (stats.totalFiles == 1) "file" else "files"} · Unlimited cloud",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = mutedColor,
+                )
             }
 
-            Spacer(Modifier.height(10.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                AssistChip(
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(contentColor.copy(alpha = 0.08f))
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Surface(
                     onClick = onOpenStarred,
-                    label = { Text("Starred (${stats.starredCount})") },
-                    leadingIcon = {
+                    shape = CircleShape,
+                    color = contentColor.copy(alpha = 0.10f),
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
                         Icon(
                             Icons.Filled.Star,
                             contentDescription = null,
-                            modifier = Modifier.size(16.dp),
-                            tint = Color(0xFFF9A825),
+                            modifier = Modifier.size(15.dp),
+                            tint = contentColor,
                         )
-                    },
-                )
-                AssistChip(
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            text = "Starred (${stats.starredCount})",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = contentColor,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+                }
+                Surface(
                     onClick = onOpenTrash,
-                    label = { Text("Trash (${stats.trashedCount})") },
-                    leadingIcon = {
+                    shape = CircleShape,
+                    color = contentColor.copy(alpha = 0.10f),
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
                         Icon(
                             Icons.Outlined.Delete,
                             contentDescription = null,
-                            modifier = Modifier.size(16.dp),
+                            modifier = Modifier.size(15.dp),
+                            tint = contentColor,
                         )
-                    },
-                )
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            text = "Trash (${stats.trashedCount})",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = contentColor,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+                }
             }
         }
     }
@@ -283,38 +348,49 @@ fun DriveFolderRow(
     onMoveToTrash: () -> Unit,
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
+    val folderSeed = Color(0xFF4C4ECD)
+    val folderPastel = expressivePastel(folderSeed)
+    val folderInk = readableContentColor(folderPastel)
+    val shape = RoundedCornerShape(26.dp)
 
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(14.dp))
+            .clip(shape)
             .combinedClickable(
                 onClick = onClick,
                 onLongClick = onLongClick,
             ),
         color = if (selected) {
-            MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.7f)
+            MaterialTheme.colorScheme.secondaryContainer
         } else {
-            MaterialTheme.colorScheme.surface
+            MaterialTheme.colorScheme.surfaceContainerLow
         },
-        tonalElevation = 1.dp,
-        shape = RoundedCornerShape(14.dp),
+        shape = shape,
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Box(
                 modifier = Modifier
-                    .size(44.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(MaterialTheme.colorScheme.primaryContainer),
-                contentAlignment = Alignment.Center,
+                    .width(5.dp)
+                    .height(38.dp)
+                    .clip(CircleShape)
+                    .background(folderSeed),
+            )
+            Spacer(Modifier.width(10.dp))
+            MorphingShapeBox(
+                modifier = Modifier.size(48.dp),
+                color = folderPastel,
+                lobes = 9,
+                wave = 0.13f,
             ) {
                 Icon(
                     imageVector = if (selected) Icons.Filled.CheckCircle else Icons.Filled.Folder,
                     contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
+                    tint = folderInk,
+                    modifier = Modifier.size(23.dp),
                 )
             }
             Spacer(Modifier.width(12.dp))
@@ -323,6 +399,7 @@ fun DriveFolderRow(
                     Text(
                         text = folder.name,
                         style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f, fill = false),
@@ -410,34 +487,42 @@ fun DriveFileRow(
     onMoveToTrash: () -> Unit,
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
+    val (_, seedColor, _) = categoryVisuals(file.category)
+    val shape = RoundedCornerShape(26.dp)
 
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(14.dp))
+            .clip(shape)
             .combinedClickable(
                 onClick = onClick,
                 onLongClick = onLongClick,
             ),
         color = if (selected) {
-            MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.7f)
+            MaterialTheme.colorScheme.secondaryContainer
         } else {
-            MaterialTheme.colorScheme.surface
+            MaterialTheme.colorScheme.surfaceContainerLow
         },
-        tonalElevation = 1.dp,
-        shape = RoundedCornerShape(14.dp),
+        shape = shape,
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            Box(
+                modifier = Modifier
+                    .width(5.dp)
+                    .height(38.dp)
+                    .clip(CircleShape)
+                    .background(seedColor),
+            )
+            Spacer(Modifier.width(10.dp))
             if (selected) {
-                Box(
-                    modifier = Modifier
-                        .size(44.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(MaterialTheme.colorScheme.primaryContainer),
-                    contentAlignment = Alignment.Center,
+                MorphingShapeBox(
+                    modifier = Modifier.size(48.dp),
+                    color = MaterialTheme.colorScheme.primaryContainer,
+                    lobes = 9,
+                    wave = 0.13f,
                 ) {
                     Icon(
                         imageVector = Icons.Filled.CheckCircle,
@@ -451,9 +536,9 @@ fun DriveFileRow(
                     contentDescription = file.name,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier
-                        .size(44.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(MaterialTheme.colorScheme.surfaceVariant),
+                        .size(48.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(MaterialTheme.colorScheme.surfaceContainerHigh),
                 )
             } else {
                 CategoryIconBadge(category = file.category)
@@ -579,14 +664,14 @@ fun DriveFileGridCard(
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
+            .clip(RoundedCornerShape(24.dp))
             .combinedClickable(onClick = onClick, onLongClick = onLongClick),
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(
             containerColor = if (selected) {
                 MaterialTheme.colorScheme.secondaryContainer
             } else {
-                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+                MaterialTheme.colorScheme.surfaceContainerLow
             }
         )
     ) {
@@ -595,7 +680,7 @@ fun DriveFileGridCard(
                 modifier = Modifier
                     .fillMaxWidth()
                     .aspectRatio(1.25f)
-                    .background(MaterialTheme.colorScheme.surfaceVariant),
+                    .background(MaterialTheme.colorScheme.surfaceContainer),
                 contentAlignment = Alignment.Center,
             ) {
                 if (thumbnailUrl != null && (file.category == FileCategory.IMAGE || file.category == FileCategory.VIDEO)) {

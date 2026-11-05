@@ -66,6 +66,7 @@ import androidx.compose.ui.unit.dp
 import com.ftcloud.app.core.pairing.DevicePairingManager
 import com.ftcloud.app.di.FTCloudContainer
 import com.ftcloud.app.ui.components.FTCloudShieldMark
+import com.ftcloud.app.ui.components.OrionSectionCard
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -209,36 +210,18 @@ fun OnboardingScreen(
             }
 
             // Instant Second-Phone Login Card
-            Card(
-                shape = RoundedCornerShape(22.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.65f),
-                ),
+            OrionSectionCard(
+                title = "Logging in on a Second Phone?",
+                icon = Icons.Outlined.PhonelinkSetup,
             ) {
                 Column(
-                    modifier = Modifier.padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = Icons.Outlined.PhonelinkSetup,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                        )
-                        Spacer(Modifier.width(10.dp))
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "Logging in on a Second Phone?",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.SemiBold,
-                            )
-                            Text(
-                                text = "On your first phone, open FT Cloud → Settings → Link a Second Phone. All your folders & imported media restore automatically in ~1 second (no re-scanning!).",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                    }
+                    Text(
+                        text = "On your first phone, open FT Cloud → Settings → Swarm & Sync → Link a Second Phone. All your folders & imported media restore automatically in ~1 second (no re-scanning!).",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
 
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Button(
@@ -283,9 +266,9 @@ fun OnboardingScreen(
             HorizontalDivider()
 
             Card(
-                shape = RoundedCornerShape(18.dp),
+                shape = RoundedCornerShape(24.dp),
                 colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
                 ),
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {

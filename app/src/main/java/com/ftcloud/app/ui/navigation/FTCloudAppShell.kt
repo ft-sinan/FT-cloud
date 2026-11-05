@@ -14,6 +14,8 @@ import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkHorizontally
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -211,6 +213,20 @@ fun FTCloudAppShell(
         }
     }
 
+    val animationsEnabled = LocalAnimationsEnabled.current
+    val navDuration = if (animationsEnabled) 260 else 0
+
+    fun navigateTopLevel(dest: TopDestination) {
+        dockVisibleState.value = true
+        navController.navigate(dest.route) {
+            popUpTo(navController.graph.findStartDestination().id) {
+                saveState = true
+            }
+            launchSingleTop = true
+            restoreState = true
+        }
+    }
+
     Box(modifier = Modifier.fillMaxSize()) {
         NavHost(
             navController = navController,
@@ -218,6 +234,22 @@ fun FTCloudAppShell(
             modifier = Modifier
                 .fillMaxSize()
                 .nestedScroll(dockConnection),
+            enterTransition = {
+                val forward = routeRank(targetState.destination.route) >= routeRank(initialState.destination.route)
+                val dir = if (forward) 1 else -1
+                fadeIn(tween(navDuration)) + slideInHorizontally(tween(navDuration)) { w -> dir * w / 12 }
+            },
+            exitTransition = {
+                val forward = routeRank(targetState.destination.route) >= routeRank(initialState.destination.route)
+                val dir = if (forward) 1 else -1
+                fadeOut(tween(navDuration)) + slideOutHorizontally(tween(navDuration)) { w -> -dir * w / 12 }
+            },
+            popEnterTransition = {
+                fadeIn(tween(navDuration)) + slideInHorizontally(tween(navDuration)) { w -> -w / 12 }
+            },
+            popExitTransition = {
+                fadeOut(tween(navDuration)) + slideOutHorizontally(tween(navDuration)) { w -> w / 12 }
+            },
         ) {
             composable(TopDestination.DRIVE.route) {
                 DriveScreen(
@@ -234,13 +266,7 @@ fun FTCloudAppShell(
                     container = container,
                     settings = settings,
                     onOpenPreview = { fileId -> navController.navigate("preview/$fileId") },
-                    onNavigateToBackup = {
-                        navController.navigate(TopDestination.BACKUP.route) {
-                            popUpTo(navController.graph.findStartDestination().id) { saveState = true }
-                            launchSingleTop = true
-                            restoreState = true
-                        }
-                    },
+                    onNavigateToBackup = { navigateTopLevel(TopDestination.BACKUP) },
                 )
             }
 
@@ -259,6 +285,7 @@ fun FTCloudAppShell(
                 SettingsScreen(
                     container = container,
                     settings = settings,
+                    onBack = { navigateTopLevel(TopDestination.DRIVE) },
                     onOpenStarred = { navController.navigate("starred") },
                     onOpenTrash = { navController.navigate("trash") },
                 )
@@ -298,16 +325,7 @@ fun FTCloudAppShell(
                 glass = glassBottomBar,
                 currentDestination = currentDestination,
                 activeTransferCount = activeTransferCount,
-                onSelectDestination = { dest ->
-                    dockVisibleState.value = true
-                    navController.navigate(dest.route) {
-                        popUpTo(navController.graph.findStartDestination().id) {
-                            saveState = true
-                        }
-                        launchSingleTop = true
-                        restoreState = true
-                    }
-                },
+                onSelectDestination = ::navigateTopLevel,
                 modifier = Modifier.align(Alignment.BottomCenter),
             )
         }
@@ -400,6 +418,15 @@ fun FTCloudAppShell(
             }
         )
     }
+}
+
+private fun routeRank(route: String?): Int = when (route) {
+    TopDestination.DRIVE.route -> 0
+    TopDestination.PHOTOS.route -> 1
+    TopDestination.TRANSFERS.route -> 2
+    TopDestination.BACKUP.route -> 3
+    TopDestination.SETTINGS.route -> 4
+    else -> 10
 }
 
 /** Orion-style floating glass pill dock overlaid over scrolling screen content. */

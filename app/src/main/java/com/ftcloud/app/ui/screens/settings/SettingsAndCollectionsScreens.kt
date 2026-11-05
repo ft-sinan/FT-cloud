@@ -2,11 +2,20 @@ package com.ftcloud.app.ui.screens.settings
 
 import android.content.Intent
 import android.graphics.Bitmap
+import android.net.Uri
+import android.os.Build
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -22,6 +31,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -30,12 +40,22 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.Logout
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Cloud
+import androidx.compose.material.icons.filled.Animation
+import androidx.compose.material.icons.filled.BlurOn
+import androidx.compose.material.icons.filled.CloudSync
+import androidx.compose.material.icons.filled.Compress
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Fingerprint
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.Security
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material.icons.filled.SystemUpdate
+import androidx.compose.material.icons.filled.TouchApp
+import androidx.compose.material.icons.filled.Vibration
+import androidx.compose.material.icons.filled.WorkspacePremium
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.CloudSync
@@ -72,7 +92,6 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -94,11 +113,10 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.ftcloud.app.BuildConfig
-import com.ftcloud.app.core.model.AccentColor
 import com.ftcloud.app.core.model.AppSettings
-import com.ftcloud.app.core.model.AppThemeMode
 import com.ftcloud.app.core.model.DriveStats
 import com.ftcloud.app.core.model.FormatUtils
 import com.ftcloud.app.core.pairing.DevicePairingManager
@@ -112,8 +130,14 @@ import com.ftcloud.app.di.FTCloudContainer
 import com.ftcloud.app.ui.components.CategoryIconBadge
 import com.ftcloud.app.ui.components.ExpressiveBackTopBar
 import com.ftcloud.app.ui.components.ExpressiveHeroHeader
+import com.ftcloud.app.ui.components.ExpressiveStat
+import com.ftcloud.app.ui.components.MorphingShapeBox
+import com.ftcloud.app.ui.components.OrionEmptyState
+import com.ftcloud.app.ui.components.OrionSectionCard
+import com.ftcloud.app.ui.components.expressivePastel
+import com.ftcloud.app.ui.components.readableContentColor
 import com.ftcloud.app.ui.components.springPress
-import com.ftcloud.app.ui.theme.accentColorValue
+import com.ftcloud.app.ui.theme.LocalAnimationsEnabled
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -143,6 +167,7 @@ private const val AUTO_UPDATE_CHECK_INTERVAL_MS = 24L * 60L * 60L * 1000L
 fun SettingsScreen(
     container: FTCloudContainer,
     settings: AppSettings,
+    onBack: () -> Unit = {},
     onOpenStarred: () -> Unit,
     onOpenTrash: () -> Unit,
 ) {
@@ -150,10 +175,17 @@ fun SettingsScreen(
     val clipboard = LocalClipboardManager.current
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
+    val animationsEnabled = LocalAnimationsEnabled.current
+
     val botStatuses by container.swarmManager.runtimeStatuses.collectAsState()
     val stats by container.driveRepository.observeStats().collectAsState(initial = DriveStats())
+    val starredFolders by container.driveRepository.observeStarredFolders().collectAsState(initial = emptyList())
+    val starredFiles by container.driveRepository.observeStarredFiles().collectAsState(initial = emptyList())
+    val trashedFolders by container.driveRepository.observeTrashedFolders().collectAsState(initial = emptyList())
+    val trashedFiles by container.driveRepository.observeTrashedFiles().collectAsState(initial = emptyList())
     val githubUpdateToken by container.credentialStore.githubUpdateTokenFlow.collectAsState()
 
+    var currentPage by rememberSaveable { mutableStateOf(SettingsPage.HUB) }
     var cacheUsedBytes by remember { mutableLongStateOf(container.driveRepository.getCurrentCacheBytes()) }
     var isImportingJson by remember { mutableStateOf(false) }
     var isSyncingUpdates by remember { mutableStateOf(false) }
@@ -176,6 +208,10 @@ fun SettingsScreen(
     var autoUpdateCheckStarted by rememberSaveable { mutableStateOf(false) }
     var showGithubTokenDialog by remember { mutableStateOf(false) }
     var githubTokenDraft by rememberSaveable { mutableStateOf("") }
+
+    BackHandler(enabled = currentPage != SettingsPage.HUB) {
+        currentPage = SettingsPage.HUB
+    }
 
     fun runUpdateCheck(automatic: Boolean) {
         if (updateStatus is UpdateStatus.Checking ||
@@ -307,6 +343,14 @@ fun SettingsScreen(
         }
     }
 
+    val starredCount = starredFolders.size + starredFiles.size
+    val trashedCount = trashedFolders.size + trashedFiles.size
+    val storageSummary = buildString {
+        append(FormatUtils.formatBytes(stats.totalBytes))
+        append(" cloud · ")
+        append(if (updateStatus is UpdateStatus.Available) "Update ready" else "App updates")
+    }
+
     Scaffold(
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         snackbarHost = {
@@ -317,548 +361,646 @@ fun SettingsScreen(
                     .padding(bottom = 84.dp),
             )
         },
+        containerColor = MaterialTheme.colorScheme.background,
     ) { innerPadding ->
-        LazyColumn(
+        AnimatedContent(
+            targetState = currentPage,
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding),
-            contentPadding = PaddingValues(bottom = 128.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
-        ) {
-            item {
-                ExpressiveHeroHeader(
-                    title = "Settings & Swarm",
-                    subtitle = "FT Cloud v${BuildConfig.VERSION_NAME} • ${settings.botCount}-Bot Swarm on ${settings.channelTitle}",
-                    icon = Icons.Filled.Cloud,
-                )
-            }
-
-            item {
-                AppUpdateCard(
-                    status = updateStatus,
-                    hasDownloadedApk = downloadedUpdateApk != null,
-                    hasPrivateRepoToken = githubUpdateToken.isNotBlank(),
-                    onCheck = { runUpdateCheck(automatic = false) },
-                    onDownload = ::downloadAndInstallUpdate,
-                    onAllowInstalls = {
-                        runCatching { AppUpdateManager.openInstallPermissionSettings(context) }
-                    },
-                    onConfigurePrivateRepoToken = {
-                        githubTokenDraft = githubUpdateToken
-                        showGithubTokenDialog = true
-                    },
-                    modifier = Modifier.padding(horizontal = 16.dp),
-                )
-            }
-
-            item {
-                Card(
-                    modifier = Modifier.padding(horizontal = 16.dp),
-                    shape = RoundedCornerShape(22.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.55f),
-                    ),
-                ) {
-                    Column(
-                        modifier = Modifier.padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp),
+            transitionSpec = {
+                val duration = if (animationsEnabled) 260 else 0
+                val enteringSubpage = targetState != SettingsPage.HUB
+                val dir = if (enteringSubpage) 1 else -1
+                (fadeIn(tween(duration)) + slideInHorizontally(tween(duration)) { w -> dir * w / 10 })
+                    .togetherWith(
+                        fadeOut(tween(duration)) + slideOutHorizontally(tween(duration)) { w -> -dir * w / 10 }
+                    )
+            },
+            label = "settingsPage",
+        ) { page ->
+            when (page) {
+                SettingsPage.HUB -> {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(bottom = 112.dp),
+                        verticalArrangement = Arrangement.spacedBy(18.dp),
                     ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                imageVector = Icons.Outlined.PhonelinkSetup,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary,
+                        item {
+                            SettingsHubHeader(
+                                onBack = onBack,
+                                channelTitle = settings.channelTitle,
+                                botCount = botStatuses.size.coerceAtLeast(settings.botCount),
+                                fileCount = stats.totalFiles,
+                                starredCount = starredCount,
+                                trashedCount = trashedCount,
+                                encryptionEnabled = settings.encryptionEnabled,
+                                biometricChecked = settings.biometricLockEnabled,
+                                onBiometricChange = {
+                                    scope.launch { container.settingsRepository.setBiometricLockEnabled(it) }
+                                },
+                                dynamicChecked = settings.dynamicColor,
+                                dynamicEnabled = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S,
+                                onDynamicChange = {
+                                    scope.launch { container.settingsRepository.setDynamicColor(it) }
+                                },
+                                hapticsChecked = settings.hapticsEnabled,
+                                onHapticsChange = {
+                                    scope.launch { container.settingsRepository.setHapticsEnabled(it) }
+                                },
+                                animationsChecked = !settings.reduceAnimations,
+                                onAnimationsChange = { enabled ->
+                                    scope.launch { container.settingsRepository.setReduceAnimations(!enabled) }
+                                },
+                                compactChecked = settings.compactMode,
+                                onCompactChange = {
+                                    scope.launch { container.settingsRepository.setCompactMode(it) }
+                                },
+                                glassChecked = settings.glassBottomBar,
+                                onGlassChange = {
+                                    scope.launch { container.settingsRepository.setGlassBottomBar(it) }
+                                },
+                                themeMode = settings.themeMode,
+                                accentColor = settings.accentColor,
+                                storageSummary = storageSummary,
+                                onJump = { currentPage = it },
+                                modifier = Modifier
+                                    .statusBarsPadding()
+                                    .padding(horizontal = 20.dp, vertical = 12.dp),
                             )
-                            Spacer(Modifier.width(10.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text("Multi-Device & Second-Phone Login", style = MaterialTheme.typography.titleMedium)
-                                Text(
-                                    text = "Use FT Cloud seamlessly across multiple phones. Scan a QR code or share an encrypted 6-digit PIN pairing key to log in on your second phone.",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        }
+
+                        if (updateStatus is UpdateStatus.Available || updateStatus is UpdateStatus.Downloading) {
+                            item {
+                                AppUpdateCard(
+                                    status = updateStatus,
+                                    hasDownloadedApk = downloadedUpdateApk != null,
+                                    hasPrivateRepoToken = githubUpdateToken.isNotBlank(),
+                                    onCheck = { runUpdateCheck(automatic = false) },
+                                    onDownload = { downloadAndInstallUpdate(it) },
+                                    onAllowInstalls = {
+                                        runCatching { AppUpdateManager.openUnknownSourcesSettings(context) }
+                                    },
+                                    onConfigurePrivateRepoToken = {
+                                        githubTokenDraft = githubUpdateToken
+                                        showGithubTokenDialog = true
+                                    },
+                                    modifier = Modifier.padding(horizontal = 20.dp),
                                 )
                             }
                         }
 
-                        Button(
-                            enabled = !isGeneratingPairing,
-                            onClick = {
-                                isGeneratingPairing = true
-                                scope.launch {
-                                    runCatching { container.driveRepository.syncManifestNow() }
-                                    runCatching {
-                                        val kit = container.driveRepository.generateDevicePairingKit()
-                                        val qrBmp = withContext(Dispatchers.Default) {
-                                            DevicePairingManager.renderQrBitmap(kit.qrPayload, sizePx = 640)
-                                        }
-                                        kit to qrBmp
-                                    }.onSuccess { (kit, bmp) ->
-                                        activePairingKit = kit
-                                        activePairingQrBitmap = bmp
-                                    }.onFailure { err ->
-                                        snackbarHostState.showSnackbar(err.message ?: "Failed to generate pairing kit")
-                                    }
-                                    isGeneratingPairing = false
-                                }
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            Icon(Icons.Outlined.QrCode2, contentDescription = null)
-                            Spacer(Modifier.width(8.dp))
-                            Text(
-                                if (isGeneratingPairing) {
-                                    "Preparing Cloud Sync & QR…"
-                                } else {
-                                    "Link a Second Phone (QR Code & PIN)"
-                                }
+                        item {
+                            CreatorSpace(
+                                onAcknowledgements = { currentPage = SettingsPage.ACKNOWLEDGEMENTS },
+                                modifier = Modifier.padding(horizontal = 16.dp),
                             )
                         }
+                    }
+                }
 
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text("Auto-Sync Across Phones", style = MaterialTheme.typography.bodyLarge)
-                                Text(
-                                    "Automatically merge new uploads, folders & edits made on other phones when FT Cloud opens",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                            Switch(
-                                checked = settings.multiDeviceAutoSync,
-                                onCheckedChange = {
-                                    scope.launch { container.settingsRepository.setMultiDeviceAutoSync(it) }
+                SettingsPage.APPEARANCE -> {
+                    SettingsSubpageColumn(
+                        title = "Appearance",
+                        subtitle = "Theme mode, OLED true black & curated brand palettes",
+                        heroIcon = Icons.Filled.Palette,
+                        onBack = { currentPage = SettingsPage.HUB },
+                    ) {
+                        OrionSectionCard(title = "Theme", icon = Icons.Filled.Palette) {
+                            AppearancePreviewStrip()
+                            Spacer(Modifier.height(14.dp))
+                            ThemeModePreviews(
+                                selected = settings.themeMode,
+                                accentColor = settings.accentColor,
+                                dynamicColorEnabled = settings.dynamicColor,
+                                onSelect = { mode ->
+                                    scope.launch { container.settingsRepository.setThemeMode(mode) }
                                 },
                             )
                         }
 
-                        OutlinedButton(
-                            enabled = !isSyncingDevices,
-                            onClick = {
-                                isSyncingDevices = true
-                                scope.launch {
-                                    runCatching {
-                                        val merge = container.driveRepository.syncMultiDeviceCloud(forcePull = false)
-                                        val live = container.channelMediaImporter.syncPendingBotUpdates()
-                                        container.driveRepository.syncManifestNow()
-                                        merge to live
-                                    }.onSuccess { (merge, live) ->
-                                        val added = merge.addedFiles + live.importedFiles
-                                        snackbarHostState.showSnackbar(
-                                            if (added > 0) "Synced across devices • +$added new items"
-                                            else "All phones are in sync (${stats.totalFiles} files)"
-                                        )
-                                    }.onFailure { err ->
-                                        snackbarHostState.showSnackbar(err.message ?: "Sync failed")
-                                    }
-                                    isSyncingDevices = false
-                                }
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            Icon(Icons.Outlined.CloudSync, contentDescription = null)
-                            Spacer(Modifier.width(6.dp))
-                            Text(if (isSyncingDevices) "Syncing Devices…" else "Sync All Phones Now")
+                        OrionSectionCard(title = "Colour palette", icon = Icons.Filled.Palette) {
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                                FeelToggleRow(
+                                    icon = Icons.Filled.Palette,
+                                    title = "Wallpaper colours",
+                                    subtitle = "Derive accents dynamically from your Android 12+ system wallpaper",
+                                    checked = settings.dynamicColor,
+                                    onCheckedChange = {
+                                        scope.launch { container.settingsRepository.setDynamicColor(it) }
+                                    },
+                                )
+                            }
+                            Text(
+                                text = "Brand palettes",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                            Spacer(Modifier.height(10.dp))
+                            PaletteSwatches(
+                                selected = settings.accentColor,
+                                dynamicColorActive = settings.dynamicColor,
+                                onSelect = { accent ->
+                                    scope.launch { container.settingsRepository.selectAccentColor(accent) }
+                                },
+                            )
                         }
                     }
                 }
-            }
 
-            item {
-                Card(
-                    modifier = Modifier.padding(horizontal = 16.dp),
-                    shape = RoundedCornerShape(22.dp),
-                ) {
-                    Column(
-                        modifier = Modifier.padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                SettingsPage.MOTION -> {
+                    SettingsSubpageColumn(
+                        title = "Motion & Feel",
+                        subtitle = "Tactile feedback, spring transitions, glass dock & density",
+                        heroIcon = Icons.Filled.TouchApp,
+                        onBack = { currentPage = SettingsPage.HUB },
                     ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically,
+                        OrionSectionCard(title = "Interaction & layout", icon = Icons.Filled.TouchApp) {
+                            FeelToggleRow(
+                                icon = Icons.Filled.Vibration,
+                                title = "Haptic feedback",
+                                subtitle = "Subtle tactile confirmation when tapping pills, cards, and actions",
+                                checked = settings.hapticsEnabled,
+                                onCheckedChange = {
+                                    scope.launch { container.settingsRepository.setHapticsEnabled(it) }
+                                },
+                            )
+                            FeelToggleRow(
+                                icon = Icons.Filled.Animation,
+                                title = "Expressive animations",
+                                subtitle = "Spring-physics morphing blobs, colour transitions & directional slides",
+                                checked = !settings.reduceAnimations,
+                                onCheckedChange = { enabled ->
+                                    scope.launch { container.settingsRepository.setReduceAnimations(!enabled) }
+                                },
+                            )
+                            FeelToggleRow(
+                                icon = Icons.Filled.BlurOn,
+                                title = "Floating glass dock",
+                                subtitle = "Translucent pill navigation bar hovering above scrolling content",
+                                checked = settings.glassBottomBar,
+                                onCheckedChange = {
+                                    scope.launch { container.settingsRepository.setGlassBottomBar(it) }
+                                },
+                            )
+                            FeelToggleRow(
+                                icon = Icons.Filled.Compress,
+                                title = "Compact mode",
+                                subtitle = "Tighter spacing and 92% density scale to fit more files on screen",
+                                checked = settings.compactMode,
+                                onCheckedChange = {
+                                    scope.launch { container.settingsRepository.setCompactMode(it) }
+                                },
+                                showDivider = false,
+                            )
+                        }
+                    }
+                }
+
+                SettingsPage.SWARM -> {
+                    SettingsSubpageColumn(
+                        title = "Bot Swarm & Sync",
+                        subtitle = "${botStatuses.size.coerceAtLeast(settings.botCount)} parallel bots · Multi-phone QR/PIN & channel scanner",
+                        heroIcon = Icons.Filled.CloudSync,
+                        onBack = { currentPage = SettingsPage.HUB },
+                    ) {
+                        OrionSectionCard(
+                            title = "Multi-Device & Second-Phone Login",
+                            icon = Icons.Outlined.PhonelinkSetup,
                         ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text("Telegram Bot Swarm", style = MaterialTheme.typography.titleMedium)
+                            Text(
+                                text = "Use FT Cloud seamlessly across multiple phones. Scan a QR code or share an encrypted 6-digit PIN pairing key — your second phone restores your entire folder tree in ~1s without re-scanning.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Spacer(Modifier.height(12.dp))
+                            Button(
+                                enabled = !isGeneratingPairing,
+                                onClick = {
+                                    isGeneratingPairing = true
+                                    scope.launch {
+                                        runCatching { container.driveRepository.syncManifestNow() }
+                                        runCatching {
+                                            val kit = container.driveRepository.generateDevicePairingKit()
+                                            val qrBmp = withContext(Dispatchers.Default) {
+                                                DevicePairingManager.renderQrBitmap(kit.qrPayload, sizePx = 640)
+                                            }
+                                            kit to qrBmp
+                                        }.onSuccess { (kit, bmp) ->
+                                            activePairingKit = kit
+                                            activePairingQrBitmap = bmp
+                                        }.onFailure { err ->
+                                            snackbarHostState.showSnackbar(err.message ?: "Failed to generate pairing kit")
+                                        }
+                                        isGeneratingPairing = false
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Icon(Icons.Outlined.QrCode2, contentDescription = null)
+                                Spacer(Modifier.width(8.dp))
                                 Text(
-                                    text = "Channel: ${settings.channelTitle} (${settings.channelId})",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    if (isGeneratingPairing) {
+                                        "Preparing Cloud Sync & QR…"
+                                    } else {
+                                        "Link a Second Phone (QR Code & PIN)"
+                                    }
                                 )
                             }
-                            IconButton(onClick = {
-                                scope.launch {
-                                    container.swarmManager.pingAllBots()
-                                    snackbarHostState.showSnackbar("Checked health of ${botStatuses.size} swarm bot(s)")
-                                }
-                            }) {
-                                Icon(Icons.Outlined.NetworkCheck, contentDescription = "Ping swarm")
-                            }
-                        }
-
-                        botStatuses.forEach { bot ->
-                            HorizontalDivider()
-                            val isCoolingDown = bot.cooldownRemainingMs > 0L
-                            val statusColor = when {
-                                !bot.isHealthy -> Color(0xFFD32F2F)
-                                isCoolingDown -> Color(0xFFF57C00)
-                                else -> Color(0xFF2E7D32)
-                            }
+                            Spacer(Modifier.height(12.dp))
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(10.dp)
-                                        .clip(CircleShape)
-                                        .background(statusColor)
-                                )
-                                Spacer(Modifier.width(10.dp))
                                 Column(modifier = Modifier.weight(1f)) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Text(
-                                            text = if (bot.username.isNotBlank()) "@${bot.username}" else bot.displayName.ifBlank { "Bot ${bot.botId}" },
-                                            style = MaterialTheme.typography.bodyLarge,
-                                        )
-                                        if (bot.hasTurboDm) {
-                                            Spacer(Modifier.width(6.dp))
-                                            Text(
-                                                text = "⚡ Turbo DM",
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = MaterialTheme.colorScheme.primary,
-                                            )
-                                        }
-                                        if (bot.activeRequests > 0) {
-                                            Spacer(Modifier.width(6.dp))
-                                            Text(
-                                                text = "• ${bot.activeRequests} active",
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = MaterialTheme.colorScheme.tertiary,
-                                            )
-                                        }
-                                    }
-                                    val latencyTag = bot.lastLatencyMs?.let { " • ${it}ms" }.orEmpty()
-                                    val opsTag = if (bot.completedOps > 0L) " • ${bot.completedOps} ops" else ""
+                                    Text("Auto-Sync Across Phones", style = MaterialTheme.typography.bodyLarge)
                                     Text(
-                                        text = "${bot.maskedToken}$latencyTag$opsTag • ↑${FormatUtils.formatBytes(bot.uploadedBytes)} ↓${FormatUtils.formatBytes(bot.downloadedBytes)}",
+                                        "Automatically merge new uploads, folders & edits made on other phones when FT Cloud opens",
                                         style = MaterialTheme.typography.labelMedium,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
-                                    if (isCoolingDown) {
-                                        Text(
-                                            text = "⏳ Telegram cooldown (${(bot.cooldownRemainingMs + 999L) / 1000L}s) — other bots continue in parallel",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = Color(0xFFF57C00),
-                                        )
-                                    } else if (!bot.lastError.isNullOrBlank()) {
-                                        Text(
-                                            text = bot.lastError,
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.error,
-                                        )
-                                    }
                                 }
-                                if (!bot.hasTurboDm && bot.username.isNotBlank()) {
-                                    TextButton(
-                                        onClick = {
-                                            runCatching {
-                                                val startUri = android.net.Uri.parse("https://t.me/${bot.username}?start=ftcloud")
-                                                context.startActivity(Intent(Intent.ACTION_VIEW, startUri))
-                                            }
-                                        },
-                                    ) {
-                                        Text("⚡ Start")
-                                    }
-                                }
-                                if (botStatuses.size > 1) {
-                                    IconButton(onClick = {
-                                        runCatching { container.swarmManager.removeBot(bot.botId) }
-                                    }) {
-                                        Icon(Icons.Outlined.DeleteOutline, contentDescription = "Remove bot")
-                                    }
-                                }
+                                Switch(
+                                    checked = settings.multiDeviceAutoSync,
+                                    onCheckedChange = {
+                                        scope.launch { container.settingsRepository.setMultiDeviceAutoSync(it) }
+                                    },
+                                )
                             }
-                        }
-
-                        if (botStatuses.any { !it.hasTurboDm }) {
-                            Text(
-                                text = "Tip: Make sure every bot is a Channel Administrator (Post + Delete + Pin), and tap ⚡ Start once in Telegram so all ${botStatuses.size} bots bypass Telegram's shared 20 msg/min channel quota and run at full parallel speed.",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-
-                        OutlinedButton(
-                            onClick = { showAddBotDialog = true },
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            Icon(Icons.Outlined.Add, contentDescription = null)
-                            Spacer(Modifier.width(6.dp))
-                            Text("Add Bot(s) to Swarm")
-                        }
-                    }
-                }
-            }
-
-            item {
-                Card(
-                    modifier = Modifier.padding(horizontal = 16.dp),
-                    shape = RoundedCornerShape(22.dp),
-                ) {
-                    Column(
-                        modifier = Modifier.padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp),
-                    ) {
-                        Text("Cloud Index Manifest", style = MaterialTheme.typography.titleMedium)
-                        Text(
-                            text = if (settings.lastManifestSyncAt != null) {
-                                "Last pinned snapshot: ${FormatUtils.formatTimestamp(settings.lastManifestSyncAt)}"
-                            } else {
-                                "Pin an index snapshot in your Telegram channel so any device can restore your entire folder tree."
-                            },
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            FilledTonalButton(
+                            Spacer(Modifier.height(10.dp))
+                            OutlinedButton(
+                                enabled = !isSyncingDevices,
                                 onClick = {
+                                    isSyncingDevices = true
                                     scope.launch {
-                                        runCatching { container.driveRepository.syncManifestNow() }
-                                            .onSuccess { snackbarHostState.showSnackbar("Manifest pinned in Telegram channel") }
-                                            .onFailure { snackbarHostState.showSnackbar(it.message ?: "Manifest sync failed") }
+                                        runCatching {
+                                            val merge = container.driveRepository.syncMultiDeviceCloud(forcePull = false)
+                                            val live = container.channelMediaImporter.syncPendingBotUpdates()
+                                            container.driveRepository.syncManifestNow()
+                                            merge to live
+                                        }.onSuccess { (merge, live) ->
+                                            val added = merge.addedFiles + live.importedFiles
+                                            snackbarHostState.showSnackbar(
+                                                if (added > 0) "Synced across devices · +$added new items"
+                                                else "All phones are in sync (${stats.totalFiles} files)"
+                                            )
+                                        }.onFailure { err ->
+                                            snackbarHostState.showSnackbar(err.message ?: "Sync failed")
+                                        }
+                                        isSyncingDevices = false
                                     }
                                 },
-                                modifier = Modifier.weight(1f),
+                                modifier = Modifier.fillMaxWidth(),
                             ) {
                                 Icon(Icons.Outlined.CloudSync, contentDescription = null)
                                 Spacer(Modifier.width(6.dp))
-                                Text("Sync Now")
-                            }
-                            OutlinedButton(
-                                onClick = { showRestoreDialog = true },
-                                modifier = Modifier.weight(1f),
-                            ) {
-                                Icon(Icons.Outlined.Restore, contentDescription = null)
-                                Spacer(Modifier.width(6.dp))
-                                Text("Restore")
+                                Text(if (isSyncingDevices) "Syncing Devices…" else "Sync All Phones Now")
                             }
                         }
-                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            OutlinedButton(onClick = onOpenStarred, modifier = Modifier.weight(1f)) {
-                                Text("Starred Items")
-                            }
-                            OutlinedButton(onClick = onOpenTrash, modifier = Modifier.weight(1f)) {
-                                Text("Trash Bin")
-                            }
-                        }
-                    }
-                }
-            }
 
-            item {
-                Card(
-                    modifier = Modifier.padding(horizontal = 16.dp),
-                    shape = RoundedCornerShape(22.dp),
-                ) {
-                    Column(
-                        modifier = Modifier.padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp),
-                    ) {
-                        Text(
-                            text = "Import Pre-Existing Channel Media",
-                            style = MaterialTheme.typography.titleMedium,
-                        )
-                        Card(
-                            shape = RoundedCornerShape(14.dp),
-                            colors = CardDefaults.cardColors(
-                                containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.65f),
-                            ),
-                        ) {
+                        OrionSectionCard(title = "Telegram Bot Swarm", icon = Icons.Outlined.NetworkCheck) {
                             Row(
-                                modifier = Modifier.padding(12.dp),
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
-                                Icon(
-                                    imageVector = Icons.Outlined.CheckCircle,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(20.dp),
-                                )
-                                Spacer(Modifier.width(10.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "Channel: ${settings.channelTitle}",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                    )
+                                    Text(
+                                        text = "ID: ${settings.channelId}",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                                IconButton(onClick = {
+                                    scope.launch {
+                                        container.swarmManager.pingAllBots()
+                                        snackbarHostState.showSnackbar("Checked health of ${botStatuses.size} swarm bot(s)")
+                                    }
+                                }) {
+                                    Icon(Icons.Outlined.NetworkCheck, contentDescription = "Ping swarm")
+                                }
+                            }
+
+                            botStatuses.forEach { bot ->
+                                HorizontalDivider(modifier = Modifier.padding(vertical = 10.dp))
+                                val isCoolingDown = bot.cooldownRemainingMs > 0L
+                                val statusColor = when {
+                                    !bot.isHealthy -> Color(0xFFD32F2F)
+                                    isCoolingDown -> Color(0xFFF57C00)
+                                    else -> Color(0xFF2E7D32)
+                                }
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(10.dp)
+                                            .clip(CircleShape)
+                                            .background(statusColor),
+                                    )
+                                    Spacer(Modifier.width(10.dp))
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Text(
+                                                text = if (bot.username.isNotBlank()) "@${bot.username}" else bot.displayName.ifBlank { "Bot ${bot.botId}" },
+                                                style = MaterialTheme.typography.bodyLarge,
+                                                fontWeight = FontWeight.Medium,
+                                            )
+                                            if (bot.hasTurboDm) {
+                                                Spacer(Modifier.width(6.dp))
+                                                Text(
+                                                    text = "⚡ Turbo DM",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.primary,
+                                                )
+                                            }
+                                            if (bot.activeRequests > 0) {
+                                                Spacer(Modifier.width(6.dp))
+                                                Text(
+                                                    text = "• ${bot.activeRequests} active",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.tertiary,
+                                                )
+                                            }
+                                        }
+                                        val latencyTag = bot.lastLatencyMs?.let { " • ${it}ms" }.orEmpty()
+                                        val opsTag = if (bot.completedOps > 0L) " • ${bot.completedOps} ops" else ""
+                                        Text(
+                                            text = "${bot.maskedToken}$latencyTag$opsTag • ↑${FormatUtils.formatBytes(bot.uploadedBytes)} ↓${FormatUtils.formatBytes(bot.downloadedBytes)}",
+                                            style = MaterialTheme.typography.labelMedium,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                        if (isCoolingDown) {
+                                            Text(
+                                                text = "⏳ Telegram cooldown (${(bot.cooldownRemainingMs + 999L) / 1000L}s) — other bots continue in parallel",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = Color(0xFFF57C00),
+                                            )
+                                        } else if (!bot.lastError.isNullOrBlank()) {
+                                            Text(
+                                                text = bot.lastError,
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.error,
+                                            )
+                                        }
+                                    }
+                                    if (!bot.hasTurboDm && bot.username.isNotBlank()) {
+                                        TextButton(
+                                            onClick = {
+                                                runCatching {
+                                                    val startUri = Uri.parse("https://t.me/${bot.username}?start=ftcloud")
+                                                    context.startActivity(Intent(Intent.ACTION_VIEW, startUri))
+                                                }
+                                            },
+                                        ) {
+                                            Text("⚡ Start")
+                                        }
+                                    }
+                                    if (botStatuses.size > 1) {
+                                        IconButton(onClick = {
+                                            runCatching { container.swarmManager.removeBot(bot.botId) }
+                                        }) {
+                                            Icon(Icons.Outlined.DeleteOutline, contentDescription = "Remove bot")
+                                        }
+                                    }
+                                }
+                            }
+
+                            if (botStatuses.any { !it.hasTurboDm }) {
+                                Spacer(Modifier.height(8.dp))
                                 Text(
-                                    text = if (stats.totalFiles > 0) {
-                                        "One-time import only: ${stats.totalFiles} files are saved in your channel's Pinned Cloud Index. Installing FT Cloud from scratch or logging in on a second phone restores everything automatically in ~1s — you never need to run this scanner again!"
-                                    } else {
-                                        "One-time import only: Once imported, FT Cloud saves the index in your channel's Pinned Manifest so reinstalls and second phones restore all media automatically without re-scanning."
-                                    },
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                )
-                            }
-                        }
-                        Text(
-                            text = "Already have 7,000+ photos, videos, or files in this channel from Telegram or another app? Bring them into 'Imported from Channel' and your Gallery with zero re-uploading:",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-
-                        FilledTonalButton(
-                            enabled = !isImportingJson,
-                            onClick = {
-                                exportJsonLauncher.launch(arrayOf("application/json", "*/*"))
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            Text(
-                                if (isImportingJson) {
-                                    "Importing result.json…"
-                                } else {
-                                    "1. Instant Import Telegram Export (result.json)"
-                                }
-                            )
-                        }
-                        Text(
-                            text = "Fastest for 7,000+ items (~2 seconds, zero rate limits): In Telegram Desktop → Export Chat History → JSON only (uncheck media downloads) → pick result.json here.",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-
-                        HorizontalDivider()
-
-                        OutlinedButton(
-                            enabled = !isSyncingUpdates,
-                            onClick = {
-                                isSyncingUpdates = true
-                                scope.launch {
-                                    runCatching { container.channelMediaImporter.syncPendingBotUpdates() }
-                                        .onSuccess { res ->
-                                            snackbarHostState.showSnackbar(
-                                                "Imported ${res.importedFiles} items • Turbo DM ready on ${res.detectedTurboDmBots} bot(s)"
-                                            )
-                                        }
-                                        .onFailure { err ->
-                                            snackbarHostState.showSnackbar(err.message ?: "Update sync failed")
-                                        }
-                                    isSyncingUpdates = false
-                                }
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            Text(
-                                if (isSyncingUpdates) {
-                                    "Syncing Bot Updates…"
-                                } else {
-                                    "2. Sync Forwarded Batches & /start Turbo DM"
-                                }
-                            )
-                        }
-                        Text(
-                            text = buildString {
-                                append("Mobile batch tip: Forward up to 100 channel posts at a time to any swarm bot, or send /start to your bots in Telegram to enable Turbo DM scanning ")
-                                append("(${settings.turboDmBotCount}/${settings.botCount} bots active).")
-                            },
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-
-                        HorizontalDivider()
-
-                        Text(
-                            text = "3. Background Bot Swarm History Scanner (No PC Needed)",
-                            style = MaterialTheme.typography.bodyMedium,
-                        )
-                        if (settings.channelScanMaxId > 0L) {
-                            val progress = (settings.channelScanCheckedCount.toFloat() /
-                                settings.channelScanMaxId.toFloat()).coerceIn(0f, 1f)
-                            LinearProgressIndicator(
-                                progress = { progress },
-                                modifier = Modifier.fillMaxWidth(),
-                            )
-                        }
-                        if (!settings.channelScanStatus.isNullOrBlank()) {
-                            Text(
-                                text = settings.channelScanStatus,
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.primary,
-                            )
-                        }
-                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            if (settings.channelScanRunning) {
-                                OutlinedButton(
-                                    onClick = {
-                                        scope.launch {
-                                            container.settingsRepository.updateChannelScanState(
-                                                running = false,
-                                                status = "Pausing scanner…",
-                                            )
-                                            ChannelScanScheduler.cancel(context)
-                                        }
-                                    },
-                                    modifier = Modifier.weight(1f),
-                                ) {
-                                    Text("Pause Scan")
-                                }
-                            } else {
-                                FilledTonalButton(
-                                    onClick = {
-                                        scope.launch {
-                                            container.settingsRepository.updateChannelScanState(
-                                                running = true,
-                                                status = "Starting newest-first channel scan…",
-                                            )
-                                            ChannelScanScheduler.startOrResume(context)
-                                        }
-                                    },
-                                    modifier = Modifier.weight(1f),
-                                ) {
-                                    Text(if (settings.channelScanCursorId > 0L) "Resume Scan" else "Scan Channel")
-                                }
-                            }
-
-                            if (settings.channelScanCursorId > 0L || settings.channelScanCheckedCount > 0) {
-                                OutlinedButton(
-                                    onClick = {
-                                        scope.launch {
-                                            ChannelScanScheduler.cancel(context)
-                                            container.settingsRepository.resetChannelScanProgress()
-                                            snackbarHostState.showSnackbar("Reset channel scanner cursor")
-                                        }
-                                    },
-                                ) {
-                                    Text("Reset")
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            item {
-                Card(
-                    modifier = Modifier.padding(horizontal = 16.dp),
-                    shape = RoundedCornerShape(22.dp),
-                ) {
-                    Column(
-                        modifier = Modifier.padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        Text("Security & Privacy", style = MaterialTheme.typography.titleMedium)
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text("AES-256-GCM Upload Encryption", style = MaterialTheme.typography.bodyLarge)
-                                Text(
-                                    "Encrypt every 19 MiB file chunk client-side before sending to Telegram",
-                                    style = MaterialTheme.typography.labelMedium,
+                                    text = "Tip: Make sure every bot is a Channel Administrator (Post + Delete + Pin), and tap ⚡ Start once in Telegram so all ${botStatuses.size} bots bypass Telegram's shared 20 msg/min channel quota.",
+                                    style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
-                            Switch(
+
+                            Spacer(Modifier.height(10.dp))
+                            OutlinedButton(
+                                onClick = { showAddBotDialog = true },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Icon(Icons.Outlined.Add, contentDescription = null)
+                                Spacer(Modifier.width(6.dp))
+                                Text("Add Bot(s) to Swarm")
+                            }
+                        }
+
+                        OrionSectionCard(title = "Cloud Index Manifest", icon = Icons.Outlined.CloudSync) {
+                            Text(
+                                text = if (settings.lastManifestSyncAt != null) {
+                                    "Last pinned snapshot: ${FormatUtils.formatTimestamp(settings.lastManifestSyncAt)}"
+                                } else {
+                                    "Pin an index snapshot in your Telegram channel so any phone restores your entire folder tree in ~1 second."
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Spacer(Modifier.height(10.dp))
+                            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                FilledTonalButton(
+                                    onClick = {
+                                        scope.launch {
+                                            runCatching { container.driveRepository.syncManifestNow() }
+                                                .onSuccess { snackbarHostState.showSnackbar("Manifest pinned in Telegram channel") }
+                                                .onFailure { snackbarHostState.showSnackbar(it.message ?: "Manifest sync failed") }
+                                        }
+                                    },
+                                    modifier = Modifier.weight(1f),
+                                ) {
+                                    Icon(Icons.Outlined.CloudSync, contentDescription = null)
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("Sync Now")
+                                }
+                                OutlinedButton(
+                                    onClick = { showRestoreDialog = true },
+                                    modifier = Modifier.weight(1f),
+                                ) {
+                                    Icon(Icons.Outlined.Restore, contentDescription = null)
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("Restore")
+                                }
+                            }
+                        }
+
+                        OrionSectionCard(
+                            title = "Import Pre-Existing Channel Media",
+                            icon = Icons.Outlined.CheckCircle,
+                        ) {
+                            Card(
+                                shape = RoundedCornerShape(16.dp),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.65f),
+                                ),
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(12.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Outlined.CheckCircle,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(20.dp),
+                                    )
+                                    Spacer(Modifier.width(10.dp))
+                                    Text(
+                                        text = if (stats.totalFiles > 0) {
+                                            "One-time import only: ${stats.totalFiles} files are saved in your channel's Pinned Cloud Index. Reinstalls and second phones restore everything automatically without re-scanning!"
+                                        } else {
+                                            "One-time import only: Once imported, FT Cloud pins the index in your channel so reinstalls and second phones restore everything automatically."
+                                        },
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    )
+                                }
+                            }
+                            Spacer(Modifier.height(10.dp))
+                            FilledTonalButton(
+                                enabled = !isImportingJson,
+                                onClick = { exportJsonLauncher.launch(arrayOf("application/json", "*/*")) },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Text(
+                                    if (isImportingJson) "Importing result.json…"
+                                    else "1. Instant Import Telegram Export (result.json)"
+                                )
+                            }
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                text = "Fastest for 7,000+ items (~2s, zero rate limits): Telegram Desktop → Export Chat History → JSON only → pick result.json.",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+
+                            HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
+
+                            OutlinedButton(
+                                enabled = !isSyncingUpdates,
+                                onClick = {
+                                    isSyncingUpdates = true
+                                    scope.launch {
+                                        runCatching { container.channelMediaImporter.syncPendingBotUpdates() }
+                                            .onSuccess { res ->
+                                                snackbarHostState.showSnackbar(
+                                                    "Imported ${res.importedFiles} items • Turbo DM ready on ${res.detectedTurboDmBots} bot(s)"
+                                                )
+                                            }
+                                            .onFailure { err ->
+                                                snackbarHostState.showSnackbar(err.message ?: "Update sync failed")
+                                            }
+                                        isSyncingUpdates = false
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Text(
+                                    if (isSyncingUpdates) "Syncing Bot Updates…"
+                                    else "2. Sync Forwarded Batches & /start Turbo DM"
+                                )
+                            }
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                text = "Forward up to 100 channel posts at a time to any swarm bot, or send /start in Telegram (${settings.turboDmBotCount}/${settings.botCount} Turbo DM active).",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+
+                            HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
+
+                            Text(
+                                text = "3. Background Bot Swarm History Scanner (No PC Needed)",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Medium,
+                            )
+                            if (settings.channelScanMaxId > 0L) {
+                                Spacer(Modifier.height(6.dp))
+                                val progress = (settings.channelScanCheckedCount.toFloat() /
+                                    settings.channelScanMaxId.toFloat()).coerceIn(0f, 1f)
+                                LinearProgressIndicator(
+                                    progress = { progress },
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                            }
+                            if (!settings.channelScanStatus.isNullOrBlank()) {
+                                Spacer(Modifier.height(6.dp))
+                                Text(
+                                    text = settings.channelScanStatus,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.primary,
+                                )
+                            }
+                            Spacer(Modifier.height(8.dp))
+                            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                if (settings.channelScanRunning) {
+                                    OutlinedButton(
+                                        onClick = {
+                                            scope.launch {
+                                                container.settingsRepository.updateChannelScanState(
+                                                    running = false,
+                                                    status = "Pausing scanner…",
+                                                )
+                                                ChannelScanScheduler.cancel(context)
+                                            }
+                                        },
+                                        modifier = Modifier.weight(1f),
+                                    ) {
+                                        Text("Pause Scan")
+                                    }
+                                } else {
+                                    FilledTonalButton(
+                                        onClick = {
+                                            scope.launch {
+                                                container.settingsRepository.updateChannelScanState(
+                                                    running = true,
+                                                    status = "Starting newest-first channel scan…",
+                                                )
+                                                ChannelScanScheduler.startOrResume(context)
+                                            }
+                                        },
+                                        modifier = Modifier.weight(1f),
+                                    ) {
+                                        Text(if (settings.channelScanCursorId > 0L) "Resume Scan" else "Scan Channel")
+                                    }
+                                }
+
+                                if (settings.channelScanCursorId > 0L || settings.channelScanCheckedCount > 0) {
+                                    OutlinedButton(
+                                        onClick = {
+                                            scope.launch {
+                                                ChannelScanScheduler.cancel(context)
+                                                container.settingsRepository.resetChannelScanProgress()
+                                                snackbarHostState.showSnackbar("Reset channel scanner cursor")
+                                            }
+                                        },
+                                    ) {
+                                        Text("Reset")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                SettingsPage.SECURITY -> {
+                    SettingsSubpageColumn(
+                        title = "Security & Privacy",
+                        subtitle = "Client-side AES-256-GCM encryption, biometric lock & screen shield",
+                        heroIcon = Icons.Filled.Security,
+                        onBack = { currentPage = SettingsPage.HUB },
+                    ) {
+                        OrionSectionCard(title = "Vault protection", icon = Icons.Filled.Lock) {
+                            FeelToggleRow(
+                                icon = Icons.Filled.Lock,
+                                title = "AES-256-GCM upload encryption",
+                                subtitle = "Encrypt every 19 MiB file chunk client-side before uploading to Telegram",
                                 checked = settings.encryptionEnabled,
                                 onCheckedChange = { wantEnabled ->
                                     if (wantEnabled) {
@@ -866,252 +1008,198 @@ fun SettingsScreen(
                                     } else {
                                         scope.launch { container.driveRepository.disableVaultEncryption() }
                                     }
-                                }
+                                },
                             )
-                        }
-                        HorizontalDivider()
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text("Biometric / Device Lock", style = MaterialTheme.typography.bodyLarge)
-                                Text(
-                                    "Require fingerprint, face, or screen lock when opening FT-Cloud",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                            Switch(
+                            FeelToggleRow(
+                                icon = Icons.Filled.Fingerprint,
+                                title = "Biometric / device lock",
+                                subtitle = "Require fingerprint, face, or screen lock when opening FT Cloud",
                                 checked = settings.biometricLockEnabled,
                                 onCheckedChange = {
                                     scope.launch { container.settingsRepository.setBiometricLockEnabled(it) }
-                                }
+                                },
                             )
-                        }
-                        HorizontalDivider()
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text("Block Screenshots", style = MaterialTheme.typography.bodyLarge)
-                                Text(
-                                    "Apply FLAG_SECURE to hide previews from recents & screen capture",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                            Switch(
+                            FeelToggleRow(
+                                icon = Icons.Filled.Security,
+                                title = "Block screenshots",
+                                subtitle = "Apply FLAG_SECURE to hide previews from recents & screen recording",
                                 checked = settings.blockScreenshots,
                                 onCheckedChange = {
                                     scope.launch { container.settingsRepository.setBlockScreenshots(it) }
-                                }
+                                },
+                                showDivider = false,
+                            )
+                        }
+
+                        OrionSectionCard(title = "Channel session", icon = Icons.AutoMirrored.Outlined.Logout) {
+                            Text(
+                                text = "Disconnecting signs out this phone only. Your uploaded files and pinned Cloud Index stay untouched inside your private Telegram channel.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Spacer(Modifier.height(12.dp))
+                            OutlinedButton(
+                                onClick = { showDisconnectConfirm = true },
+                                colors = ButtonDefaults.outlinedButtonColors(
+                                    contentColor = MaterialTheme.colorScheme.error,
+                                ),
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Icon(Icons.AutoMirrored.Outlined.Logout, contentDescription = null)
+                                Spacer(Modifier.width(8.dp))
+                                Text("Disconnect Telegram Channel")
+                            }
+                        }
+                    }
+                }
+
+                SettingsPage.COLLECTIONS -> {
+                    SettingsSubpageColumn(
+                        title = "Collections",
+                        subtitle = "$starredCount starred items · $trashedCount items in trash",
+                        heroIcon = Icons.Filled.Star,
+                        onBack = { currentPage = SettingsPage.HUB },
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(136.dp),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            SettingsBentoCard(
+                                icon = Icons.Filled.Star,
+                                title = "Starred",
+                                subtitle = "$starredCount bookmarked files & folders",
+                                seed = Color(0xFF4C4ECD),
+                                onClick = onOpenStarred,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .fillMaxSize(),
+                            )
+                            SettingsBentoCard(
+                                icon = Icons.Outlined.DeleteOutline,
+                                title = "Trash Bin",
+                                subtitle = "$trashedCount recoverable items",
+                                seed = Color(0xFFC65D00),
+                                onClick = onOpenTrash,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .fillMaxSize(),
                             )
                         }
                     }
                 }
-            }
 
-            item {
-                Card(
-                    modifier = Modifier.padding(horizontal = 16.dp),
-                    shape = RoundedCornerShape(22.dp),
-                ) {
-                    Column(
-                        modifier = Modifier.padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                SettingsPage.STORAGE -> {
+                    SettingsSubpageColumn(
+                        title = "Storage & Updates",
+                        subtitle = "${FormatUtils.formatBytes(stats.totalBytes)} stored · v${BuildConfig.VERSION_NAME}",
+                        heroIcon = Icons.Filled.Storage,
+                        onBack = { currentPage = SettingsPage.HUB },
                     ) {
-                        Text("Appearance, Motion & Cache", style = MaterialTheme.typography.titleMedium)
+                        OrionSectionCard(title = "Cloud drive stats", icon = Icons.Filled.Storage) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(20.dp))
+                                    .background(MaterialTheme.colorScheme.surfaceContainer)
+                                    .padding(vertical = 14.dp, horizontal = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                ExpressiveStat(
+                                    value = FormatUtils.formatBytes(stats.totalBytes),
+                                    label = "Cloud used",
+                                    modifier = Modifier.weight(1f),
+                                )
+                                Box(
+                                    Modifier
+                                        .width(1.dp)
+                                        .height(34.dp)
+                                        .background(MaterialTheme.colorScheme.outlineVariant),
+                                )
+                                ExpressiveStat(
+                                    value = stats.totalFiles.toString(),
+                                    label = "Files",
+                                    modifier = Modifier.weight(1f),
+                                )
+                                Box(
+                                    Modifier
+                                        .width(1.dp)
+                                        .height(34.dp)
+                                        .background(MaterialTheme.colorScheme.outlineVariant),
+                                )
+                                ExpressiveStat(
+                                    value = stats.totalFolders.toString(),
+                                    label = "Folders",
+                                    modifier = Modifier.weight(1f),
+                                )
+                            }
+                        }
 
-                        Text("Brand Palette", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
-                        Row(
-                            modifier = Modifier.horizontalScroll(rememberScrollState()),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        ) {
-                            AccentColor.entries.forEach { accent ->
-                                val selected = !settings.dynamicColor && settings.accentColor == accent
-                                val swatchColor = accentColorValue(accent)
-                                Column(
-                                    horizontalAlignment = Alignment.CenterHorizontally,
-                                    modifier = Modifier.springPress(
-                                        shape = RoundedCornerShape(14.dp),
-                                        onClickLabel = accent.label,
+                        AppUpdateCard(
+                            status = updateStatus,
+                            hasDownloadedApk = downloadedUpdateApk != null,
+                            hasPrivateRepoToken = githubUpdateToken.isNotBlank(),
+                            onCheck = { runUpdateCheck(automatic = false) },
+                            onDownload = { downloadAndInstallUpdate(it) },
+                            onAllowInstalls = {
+                                runCatching { AppUpdateManager.openUnknownSourcesSettings(context) }
+                            },
+                            onConfigurePrivateRepoToken = {
+                                githubTokenDraft = githubUpdateToken
+                                showGithubTokenDialog = true
+                            },
+                        )
+
+                        OrionSectionCard(title = "Streaming chunk cache", icon = Icons.Filled.Storage) {
+                            Text(
+                                text = "Local cache used: ${FormatUtils.formatBytes(cacheUsedBytes)} / ${settings.streamCacheLimitMb} MB",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Medium,
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            Row(
+                                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                listOf(256, 512, 1024, 2048, 4096).forEach { limitMb ->
+                                    FilterChip(
+                                        selected = settings.streamCacheLimitMb == limitMb,
                                         onClick = {
-                                            scope.launch { container.settingsRepository.selectAccentColor(accent) }
+                                            scope.launch { container.settingsRepository.setStreamCacheLimitMb(limitMb) }
                                         },
-                                    ).padding(4.dp),
-                                ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(40.dp)
-                                            .clip(CircleShape)
-                                            .background(swatchColor)
-                                            .then(
-                                                if (selected) {
-                                                    Modifier.border(2.5.dp, MaterialTheme.colorScheme.onSurface, CircleShape)
-                                                } else {
-                                                    Modifier
-                                                }
-                                            ),
-                                        contentAlignment = Alignment.Center,
-                                    ) {
-                                        if (selected) {
-                                            Icon(
-                                                imageVector = Icons.Filled.Check,
-                                                contentDescription = null,
-                                                tint = Color.White,
-                                                modifier = Modifier.size(18.dp),
-                                            )
-                                        }
-                                    }
-                                    Spacer(Modifier.height(4.dp))
-                                    Text(
-                                        text = accent.label,
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        label = {
+                                            Text(if (limitMb >= 1024) "${limitMb / 1024} GB" else "$limitMb MB")
+                                        },
                                     )
                                 }
                             }
-                        }
-
-                        Text("Theme Mode", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
-                        Row(
-                            modifier = Modifier.horizontalScroll(rememberScrollState()),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            AppThemeMode.entries.forEach { mode ->
-                                FilterChip(
-                                    selected = settings.themeMode == mode,
-                                    onClick = {
-                                        scope.launch { container.settingsRepository.setThemeMode(mode) }
-                                    },
-                                    label = { Text(mode.label) },
-                                )
+                            Spacer(Modifier.height(10.dp))
+                            OutlinedButton(
+                                onClick = {
+                                    scope.launch {
+                                        container.driveRepository.clearLocalCache()
+                                        cacheUsedBytes = container.driveRepository.getCurrentCacheBytes()
+                                        snackbarHostState.showSnackbar("Cleared local streaming cache")
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Text("Clear Local Stream Cache")
                             }
-                        }
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text("Material You Wallpaper Colors", style = MaterialTheme.typography.bodyLarge)
-                                Text(
-                                    "Override brand palette with Android 12+ dynamic wallpaper scheme",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                            Switch(
-                                checked = settings.dynamicColor,
-                                onCheckedChange = {
-                                    scope.launch { container.settingsRepository.setDynamicColor(it) }
-                                }
-                            )
-                        }
-
-                        HorizontalDivider()
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text("Floating Glass Dock", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
-                            Switch(
-                                checked = settings.glassBottomBar,
-                                onCheckedChange = {
-                                    scope.launch { container.settingsRepository.setGlassBottomBar(it) }
-                                }
-                            )
-                        }
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text("Tactile Haptics", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
-                            Switch(
-                                checked = settings.hapticsEnabled,
-                                onCheckedChange = {
-                                    scope.launch { container.settingsRepository.setHapticsEnabled(it) }
-                                }
-                            )
-                        }
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text("Compact Density", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
-                            Switch(
-                                checked = settings.compactMode,
-                                onCheckedChange = {
-                                    scope.launch { container.settingsRepository.setCompactMode(it) }
-                                }
-                            )
-                        }
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text("Reduce Motion", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
-                            Switch(
-                                checked = settings.reduceAnimations,
-                                onCheckedChange = {
-                                    scope.launch { container.settingsRepository.setReduceAnimations(it) }
-                                }
-                            )
-                        }
-
-                        HorizontalDivider()
-
-                        Text(
-                            text = "Local stream chunk cache: ${FormatUtils.formatBytes(cacheUsedBytes)} / ${settings.streamCacheLimitMb} MB",
-                            style = MaterialTheme.typography.bodyMedium,
-                        )
-                        Row(
-                            modifier = Modifier.horizontalScroll(rememberScrollState()),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            listOf(256, 512, 1024, 2048, 4096).forEach { limitMb ->
-                                FilterChip(
-                                    selected = settings.streamCacheLimitMb == limitMb,
-                                    onClick = {
-                                        scope.launch { container.settingsRepository.setStreamCacheLimitMb(limitMb) }
-                                    },
-                                    label = {
-                                        Text(if (limitMb >= 1024) "${limitMb / 1024} GB" else "$limitMb MB")
-                                    },
-                                )
-                            }
-                        }
-                        OutlinedButton(
-                            onClick = {
-                                scope.launch {
-                                    container.driveRepository.clearLocalCache()
-                                    cacheUsedBytes = container.driveRepository.getCurrentCacheBytes()
-                                    snackbarHostState.showSnackbar("Cleared local streaming cache")
-                                }
-                            }
-                        ) {
-                            Text("Clear Local Stream Cache")
                         }
                     }
                 }
-            }
 
-            item {
-                OutlinedButton(
-                    onClick = { showDisconnectConfirm = true },
-                    colors = ButtonDefaults.outlinedButtonColors(
-                        contentColor = MaterialTheme.colorScheme.error,
-                    ),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp),
-                ) {
-                    Icon(Icons.AutoMirrored.Outlined.Logout, contentDescription = null)
-                    Spacer(Modifier.width(8.dp))
-                    Text("Disconnect Telegram Channel")
+                SettingsPage.ACKNOWLEDGEMENTS -> {
+                    SettingsSubpageColumn(
+                        title = "Acknowledgements",
+                        subtitle = "Design inspiration, open-source libraries & licences",
+                        heroIcon = Icons.Filled.WorkspacePremium,
+                        onBack = { currentPage = SettingsPage.HUB },
+                    ) {
+                        AcknowledgementsContent()
+                    }
                 }
             }
         }
@@ -1241,11 +1329,11 @@ fun SettingsScreen(
     if (showGithubTokenDialog) {
         AlertDialog(
             onDismissRequest = { showGithubTokenDialog = false },
-            title = { Text("Private GitHub Repo Token") },
+            title = { Text("GitHub Access Token") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(
-                        text = "If ft-sinan/FT-cloud is kept Private on GitHub, GitHub returns HTTP 404 to unauthenticated apps. Either make the repo Public in GitHub Settings, or paste a read-only GitHub Fine-Grained Token (Repository access: FT-cloud → Permissions: Contents = Read-only):",
+                        text = "Paste an optional read-only GitHub Fine-Grained Token (Contents = Read-only) if authenticated release access is required:",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -1473,6 +1561,35 @@ fun SettingsScreen(
     }
 }
 
+@Composable
+private fun SettingsSubpageColumn(
+    title: String,
+    subtitle: String,
+    heroIcon: androidx.compose.ui.graphics.vector.ImageVector,
+    onBack: () -> Unit,
+    content: @Composable () -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState()),
+    ) {
+        ExpressiveHeroHeader(
+            title = title,
+            subtitle = subtitle,
+            icon = heroIcon,
+            onBack = onBack,
+        )
+        Column(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            content()
+            Spacer(Modifier.height(96.dp))
+        }
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun StarredScreen(
@@ -1486,13 +1603,16 @@ fun StarredScreen(
     val files by repo.observeStarredFiles().collectAsState(initial = emptyList())
 
     Scaffold(
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             ExpressiveBackTopBar(
                 title = "Starred",
-                subtitle = "${folders.size} folders • ${files.size} files",
+                subtitle = "${folders.size} folders · ${files.size} files",
+                icon = Icons.Filled.Star,
                 onBack = onBack,
             )
-        }
+        },
     ) { innerPadding ->
         if (folders.isEmpty() && files.isEmpty()) {
             Box(
@@ -1501,31 +1621,52 @@ fun StarredScreen(
                     .padding(innerPadding),
                 contentAlignment = Alignment.Center,
             ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(Icons.Outlined.StarBorder, contentDescription = null, modifier = Modifier.size(56.dp))
-                    Spacer(Modifier.height(8.dp))
-                    Text("No starred items yet", style = MaterialTheme.typography.titleMedium)
-                }
+                OrionEmptyState(
+                    icon = Icons.Outlined.StarBorder,
+                    title = "No starred items yet",
+                    subtitle = "Bookmark important folders or files in Drive to reach them quickly from here.",
+                )
             }
         } else {
+            val folderPastel = expressivePastel(Color(0xFF4C4ECD))
+            val folderInk = readableContentColor(folderPastel)
             LazyColumn(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(innerPadding),
-                contentPadding = PaddingValues(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
+                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 96.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 items(folders, key = { "sfolder_${it.id}" }) { folder ->
-                    Card(shape = RoundedCornerShape(14.dp)) {
+                    Card(
+                        shape = RoundedCornerShape(24.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+                        ),
+                    ) {
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(14.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Icon(Icons.Outlined.Folder, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                            MorphingShapeBox(
+                                modifier = Modifier.size(46.dp),
+                                color = folderPastel,
+                                lobes = 9,
+                                wave = 0.13f,
+                            ) {
+                                Icon(Icons.Outlined.Folder, contentDescription = null, tint = folderInk)
+                            }
                             Spacer(Modifier.width(12.dp))
-                            Text(folder.name, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                            Text(
+                                text = folder.name,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.weight(1f),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
                             TextButton(onClick = { scope.launch { repo.toggleFolderStar(folder.id, false) } }) {
                                 Text("Unstar")
                             }
@@ -1533,22 +1674,32 @@ fun StarredScreen(
                     }
                 }
                 items(files, key = { "sfile_${it.id}" }) { file ->
+                    val shape = RoundedCornerShape(24.dp)
                     Card(
-                        onClick = { onOpenPreview(file.id) },
-                        shape = RoundedCornerShape(14.dp),
+                        shape = shape,
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+                        ),
+                        modifier = Modifier.springPress(shape) { onOpenPreview(file.id) },
                     ) {
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(12.dp),
+                                .padding(14.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             CategoryIconBadge(category = file.category)
                             Spacer(Modifier.width(12.dp))
                             Column(modifier = Modifier.weight(1f)) {
-                                Text(file.name, style = MaterialTheme.typography.bodyLarge)
                                 Text(
-                                    FormatUtils.formatBytes(file.sizeBytes),
+                                    text = file.name,
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    fontWeight = FontWeight.Medium,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                Text(
+                                    text = FormatUtils.formatBytes(file.sizeBytes),
                                     style = MaterialTheme.typography.labelMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
@@ -1578,23 +1729,26 @@ fun TrashScreen(
     var confirmEmptyTrash by remember { mutableStateOf(false) }
 
     Scaffold(
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
+        containerColor = MaterialTheme.colorScheme.background,
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             ExpressiveBackTopBar(
-                title = "Trash",
-                subtitle = "${folders.size} folders • ${files.size} files",
+                title = "Trash Bin",
+                subtitle = "${folders.size} folders · ${files.size} files",
+                icon = Icons.Outlined.DeleteOutline,
                 onBack = onBack,
                 actions = {
                     if (folders.isNotEmpty() || files.isNotEmpty()) {
-                        TextButton(onClick = { confirmEmptyTrash = true }) {
-                            Icon(Icons.Outlined.DeleteForever, contentDescription = null)
+                        FilledTonalButton(onClick = { confirmEmptyTrash = true }) {
+                            Icon(Icons.Outlined.DeleteForever, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(4.dp))
                             Text("Empty")
                         }
                     }
                 },
             )
-        }
+        },
     ) { innerPadding ->
         if (folders.isEmpty() && files.isEmpty()) {
             Box(
@@ -1603,27 +1757,52 @@ fun TrashScreen(
                     .padding(innerPadding),
                 contentAlignment = Alignment.Center,
             ) {
-                Text("Trash is empty", style = MaterialTheme.typography.titleMedium)
+                OrionEmptyState(
+                    icon = Icons.Outlined.DeleteOutline,
+                    title = "Trash is empty",
+                    subtitle = "Items moved to Trash stay safe here until you permanently delete them from your Telegram channel.",
+                )
             }
         } else {
+            val trashPastel = expressivePastel(Color(0xFFC65D00))
+            val trashInk = readableContentColor(trashPastel)
             LazyColumn(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(innerPadding),
-                contentPadding = PaddingValues(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
+                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 96.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 items(folders, key = { "tfolder_${it.id}" }) { folder ->
-                    Card(shape = RoundedCornerShape(14.dp)) {
+                    Card(
+                        shape = RoundedCornerShape(24.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+                        ),
+                    ) {
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(12.dp),
+                                .padding(14.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Icon(Icons.Outlined.Folder, contentDescription = null)
+                            MorphingShapeBox(
+                                modifier = Modifier.size(46.dp),
+                                color = trashPastel,
+                                lobes = 9,
+                                wave = 0.13f,
+                            ) {
+                                Icon(Icons.Outlined.Folder, contentDescription = null, tint = trashInk)
+                            }
                             Spacer(Modifier.width(12.dp))
-                            Text(folder.name, modifier = Modifier.weight(1f))
+                            Text(
+                                text = folder.name,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.weight(1f),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
                             IconButton(onClick = {
                                 scope.launch { repo.setTrashedForItems(emptyList(), listOf(folder.id), trashed = false) }
                             }) {
@@ -1638,19 +1817,30 @@ fun TrashScreen(
                     }
                 }
                 items(files, key = { "tfile_${it.id}" }) { file ->
-                    Card(shape = RoundedCornerShape(14.dp)) {
+                    Card(
+                        shape = RoundedCornerShape(24.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+                        ),
+                    ) {
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(12.dp),
+                                .padding(14.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             CategoryIconBadge(category = file.category)
                             Spacer(Modifier.width(12.dp))
                             Column(modifier = Modifier.weight(1f)) {
-                                Text(file.name, style = MaterialTheme.typography.bodyLarge)
                                 Text(
-                                    FormatUtils.formatBytes(file.sizeBytes),
+                                    text = file.name,
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    fontWeight = FontWeight.Medium,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                Text(
+                                    text = FormatUtils.formatBytes(file.sizeBytes),
                                     style = MaterialTheme.typography.labelMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
@@ -1710,140 +1900,158 @@ private fun AppUpdateCard(
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
-    Card(
-        modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(22.dp),
+    OrionSectionCard(
+        title = "App updates",
+        icon = Icons.Filled.SystemUpdate,
+        modifier = modifier,
     ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.SystemUpdate,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
+        Text(
+            text = "Installed: v${BuildConfig.VERSION_NAME} · GitHub Releases",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(8.dp))
+
+        when (status) {
+            UpdateStatus.Idle -> {
+                Text(
+                    text = "Check GitHub Releases for new FT Cloud builds with SHA-256 checksum verification.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                Spacer(Modifier.width(10.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("App Updates", style = MaterialTheme.typography.titleMedium)
+                Spacer(Modifier.height(10.dp))
+                FilledTonalButton(
+                    onClick = onCheck,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("Check for Updates")
+                }
+            }
+
+            UpdateStatus.Checking -> {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
                     Text(
-                        text = "Installed: v${BuildConfig.VERSION_NAME} • GitHub Releases",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        text = "Checking GitHub Releases…",
+                        style = MaterialTheme.typography.bodyMedium,
                     )
                 }
             }
 
-            when (status) {
-                UpdateStatus.Idle -> {
+            UpdateStatus.UpToDate -> {
+                Text(
+                    text = "You're running the latest FT Cloud release (v${BuildConfig.VERSION_NAME}).",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.Medium,
+                )
+                Spacer(Modifier.height(10.dp))
+                OutlinedButton(
+                    onClick = onCheck,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("Check Again")
+                }
+            }
+
+            is UpdateStatus.Available -> {
+                UpdateReleaseDetails(status.release)
+                Spacer(Modifier.height(10.dp))
+                Button(
+                    onClick = { onDownload(status.release) },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Icon(Icons.Filled.Download, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
                     Text(
-                        text = "Check GitHub Releases for new FT Cloud builds with SHA-256 checksum verification.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        if (hasDownloadedApk) {
+                            "Install ${status.release.tagName}"
+                        } else {
+                            "Download & Install ${status.release.tagName}"
+                        }
                     )
-                    FilledTonalButton(
-                        onClick = onCheck,
+                }
+            }
+
+            is UpdateStatus.Downloading -> {
+                Text(
+                    text = if (status.progress != null) {
+                        "Downloading ${status.release.apkName}… ${status.progress}%"
+                    } else {
+                        "Downloading ${status.release.apkName}…"
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Spacer(Modifier.height(8.dp))
+                if (status.progress != null) {
+                    LinearProgressIndicator(
+                        progress = { (status.progress / 100f).coerceIn(0f, 1f) },
                         modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Text("Check for Updates")
-                    }
+                    )
+                } else {
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                 }
+            }
 
-                UpdateStatus.Checking -> {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    ) {
-                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
-                        Text(
-                            text = "Checking GitHub Releases…",
-                            style = MaterialTheme.typography.bodyMedium,
-                        )
-                    }
-                }
-
-                UpdateStatus.UpToDate -> {
+            is UpdateStatus.Verifying -> {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
                     Text(
-                        text = "You're running the latest FT Cloud release (v${BuildConfig.VERSION_NAME}).",
+                        text = "Verifying SHA-256 signature checksum…",
                         style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.primary,
-                        fontWeight = FontWeight.Medium,
                     )
-                    OutlinedButton(
-                        onClick = onCheck,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Text("Check Again")
-                    }
                 }
+            }
 
-                is UpdateStatus.Available -> {
-                    UpdateReleaseDetails(status.release)
+            is UpdateStatus.NeedsInstallPermission -> {
+                Text(
+                    text = "${status.release.tagName} is downloaded and SHA-256 verified. Allow 'Install unknown apps' for FT Cloud, then tap Install.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(10.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    FilledTonalButton(
+                        onClick = onAllowInstalls,
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Text("Allow Installs")
+                    }
                     Button(
                         onClick = { onDownload(status.release) },
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.weight(1f),
                     ) {
-                        Icon(Icons.Filled.Download, contentDescription = null)
-                        Spacer(Modifier.width(8.dp))
-                        Text(
-                            if (hasDownloadedApk) {
-                                "Install ${status.release.tagName}"
-                            } else {
-                                "Download & Install ${status.release.tagName}"
-                            }
-                        )
+                        Text("Install Now")
                     }
                 }
+            }
 
-                is UpdateStatus.Downloading -> {
-                    Text(
-                        text = if (status.progress != null) {
-                            "Downloading ${status.release.apkName}… ${status.progress}%"
-                        } else {
-                            "Downloading ${status.release.apkName}…"
-                        },
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
-                    if (status.progress != null) {
-                        LinearProgressIndicator(
-                            progress = { (status.progress / 100f).coerceIn(0f, 1f) },
-                            modifier = Modifier.fillMaxWidth(),
-                        )
+            is UpdateStatus.SignatureConflict -> {
+                Text(
+                    text = if (status.runningDebugSideBySide) {
+                        "An older FT Cloud build (${status.targetPackage}) with a different signing key is installed alongside this Debug app. Tap 'Remove Old Package' once, then tap 'Install Now' — all future updates will install in-place!"
                     } else {
-                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                    }
-                }
-
-                is UpdateStatus.Verifying -> {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        val dlNote = status.savedDownloadsPath?.let { " Saved verified APK to $it." }.orEmpty()
+                        "Your current install was signed with an earlier key, so Android requires a one-time clean install before seamless in-place updates work.$dlNote Your Cloud Index is already synced in Telegram!"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(10.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilledTonalButton(
+                        onClick = { AppUpdateManager.requestUninstallPackage(context, status.targetPackage) },
+                        modifier = Modifier.weight(1f),
                     ) {
-                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
-                        Text(
-                            text = "Verifying SHA-256 signature checksum…",
-                            style = MaterialTheme.typography.bodyMedium,
-                        )
+                        Text("Remove Old Package")
                     }
-                }
-
-                is UpdateStatus.NeedsInstallPermission -> {
-                    Text(
-                        text = "${status.release.tagName} is downloaded and SHA-256 verified. Allow 'Install unknown apps' for FT Cloud, then tap Install.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        FilledTonalButton(
-                            onClick = onAllowInstalls,
-                            modifier = Modifier.weight(1f),
-                        ) {
-                            Text("Allow Installs")
-                        }
+                    if (status.runningDebugSideBySide) {
                         Button(
                             onClick = { onDownload(status.release) },
                             modifier = Modifier.weight(1f),
@@ -1852,57 +2060,31 @@ private fun AppUpdateCard(
                         }
                     }
                 }
+            }
 
-                is UpdateStatus.SignatureConflict -> {
-                    Text(
-                        text = if (status.runningDebugSideBySide) {
-                            "An older FT Cloud build (${status.targetPackage}) with a different signing key is installed alongside this Debug app. Tap 'Remove Old Package' once, then tap 'Install Now' — all future updates will install in-place!"
-                        } else {
-                            val dlNote = status.savedDownloadsPath?.let { " Saved verified APK to $it." }.orEmpty()
-                            "Your current install was signed with an earlier key (e.g. v1.0 or Android Studio), so Android requires a one-time clean install before seamless in-place updates work.$dlNote Your Cloud Index is already synced in Telegram!"
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        FilledTonalButton(
-                            onClick = { AppUpdateManager.requestUninstallPackage(context, status.targetPackage) },
-                            modifier = Modifier.weight(1f),
-                        ) {
-                            Text("Remove Old Package")
-                        }
-                        if (status.runningDebugSideBySide) {
-                            Button(
-                                onClick = { onDownload(status.release) },
-                                modifier = Modifier.weight(1f),
-                            ) {
-                                Text("Install Now")
-                            }
-                        }
+            is UpdateStatus.Failed -> {
+                Text(
+                    text = status.errorText,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+                val isAuthOrNotFound = status.errorText.contains("401") ||
+                    status.errorText.contains("403") ||
+                    status.errorText.contains("404")
+                Spacer(Modifier.height(10.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(
+                        onClick = onCheck,
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Text("Retry Check")
                     }
-                }
-
-                is UpdateStatus.Failed -> {
-                    Text(
-                        text = status.errorText,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error,
-                    )
-                    val isAuthError = status.errorText.contains("401") || status.errorText.contains("403")
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(
-                            onClick = onCheck,
+                    if (isAuthOrNotFound || hasPrivateRepoToken) {
+                        FilledTonalButton(
+                            onClick = onConfigurePrivateRepoToken,
                             modifier = Modifier.weight(1f),
                         ) {
-                            Text("Retry Check")
-                        }
-                        if (isAuthError || hasPrivateRepoToken) {
-                            FilledTonalButton(
-                                onClick = onConfigurePrivateRepoToken,
-                                modifier = Modifier.weight(1f),
-                            ) {
-                                Text(if (hasPrivateRepoToken) "Edit Token" else "GitHub Token")
-                            }
+                            Text(if (hasPrivateRepoToken) "Edit Token" else "GitHub Token")
                         }
                     }
                 }
@@ -1936,4 +2118,3 @@ private fun UpdateReleaseDetails(release: UpdateRelease) {
         }
     }
 }
-

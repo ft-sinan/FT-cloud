@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -93,7 +94,9 @@ import com.ftcloud.app.core.model.FormatUtils
 import com.ftcloud.app.core.telegram.BOT_API_MAX_DOWNLOAD_BYTES
 import com.ftcloud.app.di.FTCloudContainer
 import com.ftcloud.app.ui.components.CategoryIconBadge
+import com.ftcloud.app.ui.components.ExpressiveBackTopBar
 import com.ftcloud.app.ui.components.FileDetailsSheet
+import com.ftcloud.app.ui.components.HeaderCircleButton
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -148,51 +151,48 @@ fun PreviewScreen(
     }
 
     Scaffold(
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
-            TopAppBar(
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Back")
-                    }
-                },
-                title = {
-                    Text(
-                        text = currentFile?.name ?: "Preview",
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                },
+            ExpressiveBackTopBar(
+                title = currentFile?.name ?: "Preview",
+                subtitle = currentFile?.let { "${FormatUtils.formatBytes(it.sizeBytes)} · ${it.category.label}" },
+                onBack = onBack,
                 actions = {
                     if (currentFile != null) {
                         if (openInTelegramAction != null) {
-                            IconButton(onClick = openInTelegramAction) {
-                                Icon(
-                                    Icons.AutoMirrored.Outlined.OpenInNew,
-                                    contentDescription = "Open in Telegram",
-                                )
-                            }
-                        }
-                        IconButton(onClick = {
-                            scope.launch {
-                                container.driveRepository.toggleFileStar(currentFile.id, !currentFile.isStarred)
-                            }
-                        }) {
-                            Icon(
-                                imageVector = if (currentFile.isStarred) Icons.Filled.Star else Icons.Outlined.StarBorder,
-                                contentDescription = "Star",
-                                tint = if (currentFile.isStarred) Color(0xFFF9A825) else MaterialTheme.colorScheme.onSurface,
+                            HeaderCircleButton(
+                                icon = Icons.AutoMirrored.Outlined.OpenInNew,
+                                contentDescription = "Open in Telegram",
+                                onClick = openInTelegramAction,
                             )
+                            Spacer(Modifier.width(6.dp))
                         }
-                        IconButton(onClick = {
-                            scope.launch {
-                                val dest = container.driveRepository.enqueueDownloadToDevice(currentFile)
-                                snackbarHostState.showSnackbar("Queued download to ${dest.name}")
-                            }
-                        }) {
-                            Icon(Icons.Outlined.Download, contentDescription = "Download")
-                        }
-                        IconButton(
+                        HeaderCircleButton(
+                            icon = if (currentFile.isStarred) Icons.Filled.Star else Icons.Outlined.StarBorder,
+                            contentDescription = "Star",
+                            contentColor = if (currentFile.isStarred) Color(0xFFF9A825) else MaterialTheme.colorScheme.onSurface,
+                            onClick = {
+                                scope.launch {
+                                    container.driveRepository.toggleFileStar(currentFile.id, !currentFile.isStarred)
+                                }
+                            },
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        HeaderCircleButton(
+                            icon = Icons.Outlined.Download,
+                            contentDescription = "Download",
+                            onClick = {
+                                scope.launch {
+                                    val dest = container.driveRepository.enqueueDownloadToDevice(currentFile)
+                                    snackbarHostState.showSnackbar("Queued download to ${dest.name}")
+                                }
+                            },
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        HeaderCircleButton(
+                            icon = Icons.Outlined.Share,
+                            contentDescription = "Share",
                             enabled = !isPreparingShare,
                             onClick = {
                                 isPreparingShare = true
@@ -217,17 +217,18 @@ fun PreviewScreen(
                                     }
                                     isPreparingShare = false
                                 }
-                            }
-                        ) {
-                            Icon(Icons.Outlined.Share, contentDescription = "Share")
-                        }
-                        IconButton(onClick = { showDetails = true }) {
-                            Icon(Icons.Outlined.Info, contentDescription = "Info")
-                        }
+                            },
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        HeaderCircleButton(
+                            icon = Icons.Outlined.Info,
+                            contentDescription = "Info",
+                            onClick = { showDetails = true },
+                        )
                     }
-                }
+                },
             )
-        }
+        },
     ) { innerPadding ->
         Box(
             modifier = Modifier

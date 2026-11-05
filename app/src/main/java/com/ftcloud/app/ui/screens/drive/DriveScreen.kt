@@ -50,6 +50,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -67,7 +68,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.ftcloud.app.core.model.AppSettings
 import com.ftcloud.app.core.model.DriveFile
@@ -81,16 +84,21 @@ import com.ftcloud.app.core.sync.ChannelScanScheduler
 import com.ftcloud.app.di.FTCloudContainer
 import com.ftcloud.app.ui.components.BreadcrumbBar
 import com.ftcloud.app.ui.components.ChannelHistoryQuickImportCard
+import com.ftcloud.app.ui.components.CloudMark
 import com.ftcloud.app.ui.components.DriveFileGridCard
 import com.ftcloud.app.ui.components.DriveFileRow
 import com.ftcloud.app.ui.components.DriveFolderRow
+import com.ftcloud.app.ui.components.ExpressiveTopBar
 import com.ftcloud.app.ui.components.FileDetailsSheet
+import com.ftcloud.app.ui.components.HeaderCircleButton
+import com.ftcloud.app.ui.components.MorphingShapeBox
 import com.ftcloud.app.ui.components.MoveDestinationSheet
+import com.ftcloud.app.ui.components.OrionEmptyState
 import com.ftcloud.app.ui.components.QuickNoteDialog
 import com.ftcloud.app.ui.components.SingleInputDialog
 import com.ftcloud.app.ui.components.StorageOverviewCard
-import com.ftcloud.app.ui.components.ExpressiveTopBar
-import com.ftcloud.app.ui.components.HeaderCircleButton
+import com.ftcloud.app.ui.components.expressivePastel
+import com.ftcloud.app.ui.components.readableContentColor
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -316,12 +324,24 @@ fun DriveScreen(
             } else {
                 ExpressiveTopBar(
                     content = {
-                        Text(
-                            text = breadcrumbs.lastOrNull()?.name ?: "FT Cloud",
-                            style = MaterialTheme.typography.titleLarge,
-                            maxLines = 1,
-                            modifier = Modifier.weight(1f),
-                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = breadcrumbs.lastOrNull()?.name ?: "FT Cloud",
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                            )
+                            Text(
+                                text = if (breadcrumbs.isEmpty()) {
+                                    "${stats.totalFiles} files · ${settings.botCount}-bot swarm"
+                                } else {
+                                    "Inside ${breadcrumbs.joinToString(" / ") { it.name }}"
+                                },
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                            )
+                        }
                     },
                     trailing = {
                         HeaderCircleButton(
@@ -438,6 +458,12 @@ fun DriveScreen(
                 },
                 singleLine = true,
                 shape = RoundedCornerShape(50),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+                    focusedBorderColor = MaterialTheme.colorScheme.primary,
+                    unfocusedBorderColor = Color.Transparent,
+                ),
                 modifier = Modifier.fillMaxWidth(),
             )
 
@@ -525,30 +551,13 @@ fun DriveScreen(
                         }
                     }
                     item {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 32.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                        ) {
-                            Icon(
-                                imageVector = Icons.Outlined.CloudQueue,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.65f),
-                                modifier = Modifier.size(64.dp),
-                            )
-                            Spacer(Modifier.height(12.dp))
-                            Text(
-                                text = if (searchQuery.isNotBlank()) "No matching cloud items" else "This folder is empty",
-                                style = MaterialTheme.typography.titleMedium,
-                            )
-                            Spacer(Modifier.height(4.dp))
-                            Text(
-                                text = "Tap + New to upload files of any size or create folders.",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
+                        OrionEmptyState(
+                            icon = Icons.Outlined.CloudQueue,
+                            title = if (searchQuery.isNotBlank()) "No matching cloud items" else "This folder is empty",
+                            subtitle = "Tap + New to upload files of any size or organize folders inside your unlimited Telegram cloud.",
+                            actionLabel = if (searchQuery.isBlank()) "Upload or Create" else null,
+                            onAction = if (searchQuery.isBlank()) ({ showAddSheet = true }) else null,
+                        )
                     }
                 }
             } else if (settings.viewMode == DriveViewMode.LIST) {
@@ -737,15 +746,17 @@ fun DriveScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 Text(
-                    text = "Add to FT-Cloud",
-                    style = MaterialTheme.typography.titleLarge,
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                    text = "Add to FT Cloud",
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                 )
                 SheetActionRow(
                     icon = Icons.Outlined.UploadFile,
+                    seed = Color(0xFF4C4ECD),
                     title = "Upload files",
                     subtitle = "Any file size (auto-split into ≤19 MiB Telegram chunks)",
                     onClick = {
@@ -755,6 +766,7 @@ fun DriveScreen(
                 )
                 SheetActionRow(
                     icon = Icons.Outlined.CreateNewFolder,
+                    seed = Color(0xFF0077A8),
                     title = "New folder",
                     subtitle = "Organize files inside virtual cloud directories",
                     onClick = {
@@ -764,6 +776,7 @@ fun DriveScreen(
                 )
                 SheetActionRow(
                     icon = Icons.Outlined.NoteAdd,
+                    seed = Color(0xFF087A4E),
                     title = "New cloud note",
                     subtitle = "Write Markdown or plain text saved directly to Telegram",
                     onClick = {
@@ -859,28 +872,39 @@ fun DriveScreen(
 @Composable
 private fun SheetActionRow(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
+    seed: Color,
     title: String,
     subtitle: String,
     onClick: () -> Unit,
 ) {
+    val pastel = expressivePastel(seed)
+    val ink = readableContentColor(pastel)
     Surface(
         onClick = onClick,
-        shape = RoundedCornerShape(14.dp),
+        shape = RoundedCornerShape(24.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
         modifier = Modifier.fillMaxWidth(),
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 12.dp),
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Icon(
-                imageVector = icon,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(26.dp),
-            )
+            MorphingShapeBox(
+                modifier = Modifier.size(46.dp),
+                color = pastel,
+                lobes = 9,
+                wave = 0.13f,
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = ink,
+                    modifier = Modifier.size(22.dp),
+                )
+            }
             Spacer(Modifier.width(14.dp))
             Column {
-                Text(title, style = MaterialTheme.typography.titleMedium)
+                Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                 Text(
                     subtitle,
                     style = MaterialTheme.typography.bodySmall,

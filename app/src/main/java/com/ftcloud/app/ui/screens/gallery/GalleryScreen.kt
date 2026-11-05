@@ -70,6 +70,7 @@ import com.ftcloud.app.di.FTCloudContainer
 import com.ftcloud.app.ui.components.ChannelHistoryQuickImportCard
 import com.ftcloud.app.ui.components.ExpressiveTopBar
 import com.ftcloud.app.ui.components.HeaderCircleButton
+import com.ftcloud.app.ui.components.OrionEmptyState
 import kotlinx.coroutines.launch
 
 private enum class GalleryMediaFilter(val label: String) {
@@ -325,21 +326,14 @@ fun GalleryScreen(
                                     }
                                 },
                             )
-                            Spacer(Modifier.height(16.dp))
+                            Spacer(Modifier.height(8.dp))
                         }
-                        Icon(
-                            imageVector = Icons.Outlined.PhotoLibrary,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.65f),
-                            modifier = Modifier.size(56.dp),
-                        )
-                        Spacer(Modifier.height(10.dp))
-                        Text("No cloud photos or videos yet", style = MaterialTheme.typography.titleMedium)
-                        Spacer(Modifier.height(4.dp))
-                        Text(
-                            "Enable Auto Backup to back up your camera roll in original quality, or tap + to upload.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        OrionEmptyState(
+                            icon = Icons.Outlined.PhotoLibrary,
+                            title = "No cloud photos or videos yet",
+                            subtitle = "Enable Auto Backup to save your camera roll in original quality, or tap + to upload.",
+                            actionLabel = "Configure Auto Backup",
+                            onAction = onNavigateToBackup,
                         )
                     }
                 }
@@ -348,13 +342,13 @@ fun GalleryScreen(
                     columns = GridCells.Fixed(columns),
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(
-                        start = 8.dp,
+                        start = 10.dp,
                         top = 8.dp,
-                        end = 8.dp,
+                        end = 10.dp,
                         bottom = 164.dp,
                     ),
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     items(
                         items = entries,
@@ -402,8 +396,8 @@ fun GalleryScreen(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .aspectRatio(1f)
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                                        .clip(RoundedCornerShape(14.dp))
+                                        .background(MaterialTheme.colorScheme.surfaceContainerLow)
                                         .clickable { onOpenPreview(file.id) }
                                 ) {
                                     AsyncImage(
