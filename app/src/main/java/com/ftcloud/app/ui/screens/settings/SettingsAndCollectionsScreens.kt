@@ -439,7 +439,7 @@ fun SettingsScreen(
                                     onCheck = { runUpdateCheck(automatic = false) },
                                     onDownload = { downloadAndInstallUpdate(it) },
                                     onAllowInstalls = {
-                                        runCatching { AppUpdateManager.openUnknownSourcesSettings(context) }
+                                        runCatching { AppUpdateManager.openInstallPermissionSettings(context) }
                                     },
                                     onConfigurePrivateRepoToken = {
                                         githubTokenDraft = githubUpdateToken
@@ -1143,7 +1143,7 @@ fun SettingsScreen(
                             onCheck = { runUpdateCheck(automatic = false) },
                             onDownload = { downloadAndInstallUpdate(it) },
                             onAllowInstalls = {
-                                runCatching { AppUpdateManager.openUnknownSourcesSettings(context) }
+                                runCatching { AppUpdateManager.openInstallPermissionSettings(context) }
                             },
                             onConfigurePrivateRepoToken = {
                                 githubTokenDraft = githubUpdateToken
