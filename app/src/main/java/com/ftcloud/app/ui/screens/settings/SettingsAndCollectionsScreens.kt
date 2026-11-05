@@ -1974,6 +1974,21 @@ private fun AppUpdateCard(
                         }
                     )
                 }
+                if (!status.release.apkDownloadUrl.isNullOrBlank()) {
+                    Spacer(Modifier.height(6.dp))
+                    OutlinedButton(
+                        onClick = {
+                            runCatching {
+                                context.startActivity(
+                                    Intent(Intent.ACTION_VIEW, Uri.parse(status.release.apkDownloadUrl))
+                                )
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text("Download via Browser (GitHub)")
+                    }
+                }
             }
 
             is UpdateStatus.Downloading -> {
@@ -2046,10 +2061,10 @@ private fun AppUpdateCard(
                 Spacer(Modifier.height(10.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FilledTonalButton(
-                        onClick = { AppUpdateManager.requestUninstallPackage(context, status.targetPackage) },
+                        onClick = { AppUpdateManager.openAppDetailsSettings(context, status.targetPackage) },
                         modifier = Modifier.weight(1f),
                     ) {
-                        Text("Remove Old Package")
+                        Text("Open App Info")
                     }
                     if (status.runningDebugSideBySide) {
                         Button(

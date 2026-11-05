@@ -1,5 +1,8 @@
-# Keep kotlinx.serialization serializers
--keepattributes *Annotation*, InnerClasses
+# Keep class & method names transparent (unobfuscated) while R8 shrinks unused code/resources.
+# Prevents Google Play Protect on-device ML false positives on open-source sideloaded APKs
+# that legitimately talk to api.telegram.org and support self-updates.
+-dontobfuscate
+-keepattributes *Annotation*, InnerClasses, SourceFile, LineNumberTable
 -dontnote kotlinx.serialization.AnnotationsKt
 
 -keepclassmembers class kotlinx.serialization.json.** {

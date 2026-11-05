@@ -348,8 +348,11 @@ object AppUpdateManager {
             }
         }
 
-    fun requestUninstallPackage(context: Context, packageName: String) {
-        val intent = Intent(Intent.ACTION_DELETE, Uri.parse("package:$packageName")).apply {
+    fun openAppDetailsSettings(context: Context, packageName: String) {
+        val intent = Intent(
+            Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+            Uri.parse("package:$packageName"),
+        ).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
         context.startActivity(intent)

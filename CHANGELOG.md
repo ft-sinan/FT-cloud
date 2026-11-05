@@ -2,6 +2,14 @@
 
 All notable changes to **FT Cloud** are documented in this file.
 
+## [1.3.1] - 2026-11-05
+
+### Fixed & Improved
+- **Google Play Protect False-Positive Remediation**:
+  - Added `-dontobfuscate` + `SourceFile,LineNumberTable` retention to `proguard-rules.pro` while keeping full R8 dead-code and resource shrinking enabled. Keeping `com.ftcloud.app.*` symbols transparent avoids Play Protect's on-device ML heuristic that flags R8-obfuscated sideloaded APKs communicating with `api.telegram.org`.
+  - Removed unused `READ_MEDIA_AUDIO` permission, redundant `<queries>` self-package declaration, and `Intent.ACTION_DELETE` programmatic uninstall call (replaced with standard system App Info `ACTION_APPLICATION_DETAILS_SETTINGS`).
+  - Added a one-tap **Download via Browser (GitHub)** option alongside in-app **Download & Install** in **Settings → Storage & Updates**.
+
 ## [1.3.0] - 2026-11-05
 
 ### Added & Improved
