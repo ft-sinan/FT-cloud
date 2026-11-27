@@ -327,7 +327,7 @@ fun SettingsScreen(
         runCatching {
             context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(release.apkDownloadUrl)))
         }.onFailure {
-            snackbarHostState.showSnackbar("No browser app found to open the GitHub download")
+            scope.launch { snackbarHostState.showSnackbar("No browser app found to open the GitHub download") }
         }
     }
 
@@ -336,7 +336,7 @@ fun SettingsScreen(
         runCatching {
             context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
         }.onFailure {
-            snackbarHostState.showSnackbar("No browser app found to open the release notes")
+            scope.launch { snackbarHostState.showSnackbar("No browser app found to open the release notes") }
         }
     }
 
@@ -535,7 +535,9 @@ fun SettingsScreen(
                                     onOpenDownloadsFolder = {
                                         runCatching { AppUpdateManager.openDownloadsFolder(context) }
                                             .onFailure {
-                                                snackbarHostState.showSnackbar("Open your Files app → Downloads to install")
+                                                scope.launch {
+                                                    snackbarHostState.showSnackbar("Open your Files app → Downloads to install")
+                                                }
                                             }
                                     },
                                     hasReleaseToken = githubUpdateToken.isNotBlank(),
@@ -1136,9 +1138,11 @@ fun SettingsScreen(
                             },
                             onOpenPlayProtect = {
                                 if (!AppUpdateManager.openPlayProtectSettings(context)) {
-                                    snackbarHostState.showSnackbar(
-                                        "Open Google Play → profile → Play Protect to view scan status"
-                                    )
+                                    scope.launch {
+                                        snackbarHostState.showSnackbar(
+                                            "Open Google Play → profile → Play Protect to view scan status"
+                                        )
+                                    }
                                 }
                             },
                             snackbarHostState = snackbarHostState,
@@ -1285,7 +1289,9 @@ fun SettingsScreen(
                             onOpenDownloadsFolder = {
                                 runCatching { AppUpdateManager.openDownloadsFolder(context) }
                                     .onFailure {
-                                        snackbarHostState.showSnackbar("Open your Files app → Downloads to install")
+                                        scope.launch {
+                                            snackbarHostState.showSnackbar("Open your Files app → Downloads to install")
+                                        }
                                     }
                             },
                             hasReleaseToken = githubUpdateToken.isNotBlank(),
@@ -2422,6 +2428,7 @@ private fun SecurityScanInfoCard(
 ) {
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
+    val scope = rememberCoroutineScope()
     val signingSha256 = remember {
         AppUpdateManager.installedSigningSha256(context)
     }
@@ -2553,9 +2560,11 @@ private fun SecurityScanInfoCard(
                     appendLine("SHA-256 verified against a published sidecar, and installed by Android itself.")
                 }
                 clipboard.setText(AnnotatedString(report))
-                snackbarHostState.showSnackbar(
-                    "Appeal text copied — paste it into Google's Play Protect Appeal form"
-                )
+                scope.launch {
+                    snackbarHostState.showSnackbar(
+                        "Appeal text copied — paste it into Google's Play Protect Appeal form"
+                    )
+                }
             },
             modifier = Modifier.fillMaxWidth(),
         ) {
