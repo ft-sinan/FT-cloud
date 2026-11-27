@@ -244,12 +244,14 @@ fun Modifier.springPress(
         },
         label = "springPress",
     )
+    // Order matters: .clickable must be installed BEFORE .clip(shape). Clipping first shrinks the
+    // touch target to the blob/pill outline, so taps near the rounded edges (and on the odd-lobed
+    // morphing shapes) silently do nothing.
     return this
         .graphicsLayer {
             scaleX = scale
             scaleY = scale
         }
-        .clip(shape)
         .clickable(
             interactionSource = interactionSource,
             indication = ripple(),
@@ -260,6 +262,7 @@ fun Modifier.springPress(
             haptic()
             onClick()
         }
+        .clip(shape)
 }
 
 @Composable

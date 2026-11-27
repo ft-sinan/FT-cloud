@@ -138,7 +138,9 @@ fun TransfersScreen(
 
             if (filtered.isEmpty()) {
                 Box(
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
                     contentAlignment = Alignment.Center,
                 ) {
                     OrionEmptyState(
@@ -149,7 +151,9 @@ fun TransfersScreen(
                 }
             } else {
                 LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
                     contentPadding = PaddingValues(
                         start = 16.dp,
                         top = 12.dp,

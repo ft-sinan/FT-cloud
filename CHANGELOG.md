@@ -2,6 +2,23 @@
 
 All notable changes to **FT Cloud** are documented in this file.
 
+## [1.3.2] - 2026-10-29
+
+### Fixed & Improved
+- **Every Dead Button Fixed (full clickable audit)**:
+  - **Gallery "Restore Index"** now actually restores: it force-pulls the pinned Cloud Index, merges live bot updates, and reports `+N items`, "up to date", or "encrypted index" — previously it was wired to an empty `{}` lambda.
+  - **Preview "Save to Device Downloads"** on text/code files now queues a real download with feedback; it was bound to `{}` and did nothing.
+  - **Grid view file cards** previously had *no* actions at all. Each card now has an overflow menu with Save to Downloads, Star, Rename, Move to…, Details, and Move to Trash (same set as list view).
+  - **Grid folder → Move to Trash** no longer silently deletes with zero feedback; it confirms with a snackbar like list view.
+  - **Touch targets**: `Modifier.springPress` clipped content *before* installing `.clickable`, which shrank the hit area to the blob/pill outline so taps near rounded edges were dropped. The clip now comes last. The Creator Space coin's tap/flip detector had the same stale-clip ordering and is fixed too.
+  - **Bottom content no longer clipped**: Drive (list + grid + empty state), Gallery grid, and the Transfers list were lazy containers sized `fillMaxSize()` inside a `Column`, so the final rows sat under the floating dock and could not be scrolled to. They now use `fillMaxWidth().weight(1f)`.
+- **Hybrid updater (browser by default, in-app installer as an explicit opt-in)**:
+  - Default flow now downloads the release APK with FT Cloud's own SHA-256 verifier, saves it to **Downloads**, and offers **Install from Downloads** / **Open Downloads** / **Release Notes**. Android installs it, not FT Cloud.
+  - The default flow never installs anything itself, so the APK is handed to Android the same way a browser download would be.
+  - **Advanced: install inside FT Cloud** is a persisted switch (`Settings → Security scan`, also on the update card). When enabled, the existing verified in-app installer path is used unchanged. `REQUEST_INSTALL_PACKAGES` remains declared for that opt-in path only — Play Protect false positives came from R8 obfuscation plus `ACTION_DELETE` programmatic uninstalls (both removed in 1.3.1), not from this permission on its own.
+  - New **Security scan** card shows package id, version code, the live APK signer SHA-256 (copyable), the exact permission surface, a **Check in Play Protect** shortcut, and a one-tap **Copy Play Protect appeal details** report (package, version, certificate hash, download URL, source URL) for the Play Protect appeal form.
+- **Settings housekeeping**: the release-token control is reachable again in the updater card (it had been orphaned into an unused parameter), and `storageSummary` is now rendered in the Settings bento instead of being computed and discarded.
+
 ## [1.3.1] - 2026-11-05
 
 ### Fixed & Improved

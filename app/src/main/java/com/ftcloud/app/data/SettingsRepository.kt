@@ -87,6 +87,7 @@ class SettingsRepository(
             biometricLockEnabled = prefs[KEY_BIOMETRIC_LOCK] ?: false,
             blockScreenshots = prefs[KEY_BLOCK_SCREENSHOTS] ?: false,
             encryptionEnabled = prefs[KEY_ENCRYPTION_ENABLED] ?: false,
+            allowInAppInstaller = prefs[KEY_ALLOW_IN_APP_INSTALLER] ?: false,
             multiDeviceAutoSync = prefs[KEY_MULTI_DEVICE_AUTO_SYNC] ?: true,
             pinnedManifestMessageId = prefs[KEY_PINNED_MANIFEST_MSG_ID],
             lastManifestSyncAt = prefs[KEY_LAST_MANIFEST_SYNC_AT],
@@ -212,6 +213,14 @@ class SettingsRepository(
 
     suspend fun setMultiDeviceAutoSync(enabled: Boolean) {
         dataStore.edit { it[KEY_MULTI_DEVICE_AUTO_SYNC] = enabled }
+    }
+
+    /**
+     * Opt-in for the in-app APK installer. Default is OFF: updates download through the browser
+     * (Play Protect friendly). Enabling this is the user's explicit "Advanced" choice.
+     */
+    suspend fun setAllowInAppInstaller(enabled: Boolean) {
+        dataStore.edit { it[KEY_ALLOW_IN_APP_INSTALLER] = enabled }
     }
 
     suspend fun getDeletedTombstones(): Pair<Set<String>, Set<String>> {
@@ -389,6 +398,7 @@ class SettingsRepository(
         private val KEY_BLOCK_SCREENSHOTS = booleanPreferencesKey("block_screenshots")
         private val KEY_ENCRYPTION_ENABLED = booleanPreferencesKey("encryption_enabled")
         private val KEY_MULTI_DEVICE_AUTO_SYNC = booleanPreferencesKey("multi_device_auto_sync")
+        private val KEY_ALLOW_IN_APP_INSTALLER = booleanPreferencesKey("allow_in_app_installer")
         private val KEY_DELETED_FILE_IDS_JSON = stringPreferencesKey("deleted_file_ids_json")
         private val KEY_DELETED_FOLDER_IDS_JSON = stringPreferencesKey("deleted_folder_ids_json")
         private val KEY_PINNED_MANIFEST_MSG_ID = longPreferencesKey("pinned_manifest_msg_id")

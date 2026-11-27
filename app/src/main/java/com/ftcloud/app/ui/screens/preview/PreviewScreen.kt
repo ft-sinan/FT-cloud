@@ -280,7 +280,17 @@ fun PreviewScreen(
                             onCopyAll = { text ->
                                 clipboard.setText(AnnotatedString(text))
                                 scope.launch { snackbarHostState.showSnackbar("Copied to clipboard") }
-                            }
+                            },
+                            onDownload = {
+                                scope.launch {
+                                    runCatching {
+                                        val dest = container.driveRepository.enqueueDownloadToDevice(currentFile)
+                                        snackbarHostState.showSnackbar("Queued download to ${dest.name}")
+                                    }.onFailure { err ->
+                                        snackbarHostState.showSnackbar(err.message ?: "Could not queue download")
+                                    }
+                                }
+                            },
                         )
 
                         else -> BinaryFileSummaryCard(
@@ -581,6 +591,7 @@ private fun TextCloudPreview(
     container: FTCloudContainer,
     file: DriveFile,
     onCopyAll: (String) -> Unit,
+    onDownload: () -> Unit,
 ) {
     val context = LocalContext.current
     var textState by remember(file.id) { mutableStateOf<Result<String>?>(null) }
@@ -602,7 +613,7 @@ private fun TextCloudPreview(
     val res = textState
     when {
         res == null -> CircularProgressIndicator()
-        res.isFailure -> BinaryFileSummaryCard(file = file, onDownload = {})
+        res.isFailure -> BinaryFileSummaryCard(file = file, onDownload = onDownload)
         else -> {
             val content = res.getOrDefault("")
             Column(

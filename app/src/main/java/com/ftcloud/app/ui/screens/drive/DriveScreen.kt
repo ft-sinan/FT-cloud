@@ -508,7 +508,9 @@ fun DriveScreen(
 
             if (visibleFolders.isEmpty() && visibleFiles.isEmpty()) {
                 LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
                     contentPadding = PaddingValues(top = 8.dp, bottom = 164.dp),
                     verticalArrangement = Arrangement.spacedBy(16.dp),
                 ) {
@@ -562,7 +564,9 @@ fun DriveScreen(
                 }
             } else if (settings.viewMode == DriveViewMode.LIST) {
                 LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
                     contentPadding = PaddingValues(top = 6.dp, bottom = 164.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
@@ -675,7 +679,9 @@ fun DriveScreen(
             } else {
                 LazyVerticalGrid(
                     columns = GridCells.Fixed(2),
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
                     contentPadding = PaddingValues(top = 6.dp, bottom = 164.dp),
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -707,6 +713,7 @@ fun DriveScreen(
                             onMoveToTrash = {
                                 scope.launch {
                                     repo.setTrashedForItems(emptyList(), listOf(folder.id), trashed = true)
+                                    snackbarHostState.showSnackbar("Moved \"${folder.name}\" to Trash")
                                 }
                             }
                         )
@@ -732,7 +739,25 @@ fun DriveScreen(
                             },
                             onLongClick = {
                                 selectedFileIds = if (isSelected) selectedFileIds - file.id else selectedFileIds + file.id
-                            }
+                            },
+                            onToggleStar = {
+                                scope.launch { repo.toggleFileStar(file.id, !file.isStarred) }
+                            },
+                            onDownload = {
+                                scope.launch {
+                                    val dest = repo.enqueueDownloadToDevice(file)
+                                    snackbarHostState.showSnackbar("Downloading to ${dest.name}")
+                                }
+                            },
+                            onRename = { renameFileTarget = file },
+                            onMove = { moveTargetIds = setOf(file.id) to emptySet() },
+                            onDetails = { detailsFileTarget = file },
+                            onMoveToTrash = {
+                                scope.launch {
+                                    repo.setTrashedForItems(listOf(file.id), emptyList(), trashed = true)
+                                    snackbarHostState.showSnackbar("Moved \"${file.name}\" to Trash")
+                                }
+                            },
                         )
                     }
                 }

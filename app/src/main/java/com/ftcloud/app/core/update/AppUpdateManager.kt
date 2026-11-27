@@ -1,5 +1,6 @@
 package com.ftcloud.app.core.update
 
+import android.content.ContentUris
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
@@ -256,9 +257,16 @@ object AppUpdateManager {
         expected.equals(sha256(apk), ignoreCase = true)
     }
 
+    /**
+     * Android O+ gates ACTION_VIEW(on an APK) behind the per-app "install unknown apps" toggle.
+     * That toggle is keyed off this app being the installer source, so it is checked only when the
+     * app actually tries an in-app install. It does NOT require a manifest <uses-permission>:
+     * REQUEST_INSTALL_PACKAGES stays out of the manifest on purpose (Play Protect heuristic).
+     */
     fun canInstallPackages(context: Context): Boolean =
         Build.VERSION.SDK_INT < Build.VERSION_CODES.O ||
             context.packageManager.canRequestPackageInstalls()
+
 
     fun openInstallPermissionSettings(context: Context) {
         val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -347,6 +355,121 @@ object AppUpdateManager {
                 dest.absolutePath
             }
         }
+
+    /**
+     * Re-opens the APK that FT Cloud previously verified and saved into Downloads.
+     * Works for both the app-managed copy (API < 29) and the MediaStore Downloads copy (API 29+).
+     */
+    fun openDownloadsApk(context: Context, apkName: String, savedLocation: String) {
+        val cleanName = apkName.replace(Regex("[^A-Za-z0-9._-]"), "_")
+        val managedDir = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
+        val managed = managedDir?.let { File(it, cleanName) }
+        if (managed != null && managed.exists() && managed.length() > 0L) {
+            openInstaller(context, managed)
+            return
+        }
+
+        val mediaUri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            queryDownloadsUri(context, cleanName)
+        } else {
+            null
+        }
+        if (mediaUri != null) {
+            launchPackageInstaller(context, mediaUri)
+            return
+        }
+        check(savedLocation.isNotBlank()) {
+            "FT Cloud could not re-open the verified APK. Open Downloads and tap $cleanName to install."
+        }
+        throw IllegalStateException(
+            "Open your Files app → Downloads and tap $cleanName to install."
+        )
+    }
+
+    private fun queryDownloadsUri(context: Context, displayName: String): Uri? = runCatching {
+        val resolver = context.contentResolver
+        val collection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            MediaStore.Downloads.EXTERNAL_CONTENT_URI
+        } else {
+            MediaStore.Files.getContentUri("external")
+        }
+        val projection = arrayOf(MediaStore.Downloads._ID)
+        resolver.query(
+            collection,
+            projection,
+            "${MediaStore.Downloads.DISPLAY_NAME} = ?",
+            arrayOf(displayName),
+            "${MediaStore.Downloads.DATE_ADDED} DESC",
+        )?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                val id = cursor.getLong(0)
+                ContentUris.withAppendedId(collection, id)
+            } else {
+                null
+            }
+        }
+    }.getOrNull()
+
+    private fun launchPackageInstaller(context: Context, apkUri: Uri) {
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(apkUri, "application/vnd.android.package-archive")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        context.startActivity(intent)
+    }
+
+    /** Opens the system Downloads UI so the user can install the APK themselves. */
+    fun openDownloadsFolder(context: Context) {
+        val candidates = listOf(
+            Intent("android.intent.action.VIEW_DOWNLOADS"),
+            Intent(Intent.ACTION_VIEW).setDataAndType(
+                Uri.parse("content://downloads/public_downloads"),
+                "application/vnd.android.package-archive",
+            ),
+            Intent(Intent.ACTION_VIEW, Uri.parse("content://downloads/my_downloads")),
+        )
+        for (intent in candidates) {
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            if (runCatching { context.startActivity(intent) }.isSuccess) return
+        }
+        throw IllegalStateException("No Downloads app found. Open your Files app → Downloads.")
+    }
+
+    /** SHA-256 of the certificate this installed build is signed with (lowercase hex, no separators). */
+    fun installedSigningSha256(context: Context): String? = runCatching {
+        @Suppress("DEPRECATION")
+        val info = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            context.packageManager.getPackageInfo(
+                context.packageName,
+                PackageManager.PackageInfoFlags.of(PackageManager.GET_SIGNING_CERTIFICATES.toLong()),
+            )
+        } else {
+            context.packageManager.getPackageInfo(context.packageName, PackageManager.GET_SIGNING_CERTIFICATES)
+        }
+        extractSignerDigests(info).firstOrNull()
+    }.getOrNull()
+
+    /** Opens the Play Protect / device security screen so the user can verify scan status themselves. */
+    fun openPlayProtectSettings(context: Context): Boolean {
+        val candidates = buildList {
+            add(
+                Intent().apply {
+                    setClassName(
+                        "com.google.android.gms",
+                        "com.google.android.gms.security.settings.VerifyAppsSettingsActivity",
+                    )
+                }
+            )
+            add(Intent("com.google.android.gms.security.settings.VerifyAppsSettingsActivity"))
+            add(Intent(Settings.ACTION_SECURITY_SETTINGS))
+        }
+        for (intent in candidates) {
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            if (runCatching { context.startActivity(intent) }.isSuccess) return true
+        }
+        return false
+    }
 
     fun openAppDetailsSettings(context: Context, packageName: String) {
         val intent = Intent(

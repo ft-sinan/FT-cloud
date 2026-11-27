@@ -660,7 +660,14 @@ fun DriveFileGridCard(
     selected: Boolean,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
+    onToggleStar: () -> Unit,
+    onDownload: () -> Unit,
+    onRename: () -> Unit,
+    onMove: () -> Unit,
+    onDetails: () -> Unit,
+    onMoveToTrash: () -> Unit,
 ) {
+    var menuExpanded by remember { mutableStateOf(false) }
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -709,6 +716,83 @@ fun DriveFileGridCard(
                             contentDescription = "Selected",
                             tint = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.size(20.dp),
+                        )
+                    }
+                }
+
+                // Grid cards previously exposed no actions at all; the overflow menu makes every
+                // row-level action reachable without switching to list view.
+                Box(modifier = Modifier.align(Alignment.TopStart).padding(4.dp)) {
+                    IconButton(
+                        onClick = { menuExpanded = true },
+                        modifier = Modifier
+                            .size(32.dp)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.82f)),
+                    ) {
+                        Icon(
+                            Icons.Outlined.MoreVert,
+                            contentDescription = "File options",
+                            modifier = Modifier.size(18.dp),
+                        )
+                    }
+                    DropdownMenu(
+                        expanded = menuExpanded,
+                        onDismissRequest = { menuExpanded = false },
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("Save to Downloads") },
+                            leadingIcon = { Icon(Icons.Outlined.Download, contentDescription = null) },
+                            onClick = {
+                                menuExpanded = false
+                                onDownload()
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text(if (file.isStarred) "Remove star" else "Add star") },
+                            leadingIcon = {
+                                Icon(
+                                    if (file.isStarred) Icons.Filled.Star else Icons.Outlined.StarBorder,
+                                    contentDescription = null,
+                                )
+                            },
+                            onClick = {
+                                menuExpanded = false
+                                onToggleStar()
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Rename") },
+                            leadingIcon = { Icon(Icons.Outlined.Edit, contentDescription = null) },
+                            onClick = {
+                                menuExpanded = false
+                                onRename()
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Move to…") },
+                            leadingIcon = { Icon(Icons.Outlined.DriveFileMove, contentDescription = null) },
+                            onClick = {
+                                menuExpanded = false
+                                onMove()
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Details") },
+                            leadingIcon = { Icon(Icons.Outlined.Info, contentDescription = null) },
+                            onClick = {
+                                menuExpanded = false
+                                onDetails()
+                            }
+                        )
+                        HorizontalDivider()
+                        DropdownMenuItem(
+                            text = { Text("Move to Trash") },
+                            leadingIcon = { Icon(Icons.Outlined.Delete, contentDescription = null) },
+                            onClick = {
+                                menuExpanded = false
+                                onMoveToTrash()
+                            }
                         )
                     }
                 }

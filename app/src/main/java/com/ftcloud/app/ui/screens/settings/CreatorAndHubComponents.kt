@@ -986,6 +986,7 @@ internal fun CreatorSpace(
                             rotationX = -tiltY
                             cameraDistance = 18.dp.toPx()
                         }
+                        .clip(CircleShape)
                         .pointerInput(animationsEnabled) {
                             detectTapGestures(
                                 onPress = { offset ->

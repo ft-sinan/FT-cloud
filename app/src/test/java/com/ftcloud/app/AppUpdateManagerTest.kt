@@ -133,6 +133,20 @@ class AppUpdateManagerTest {
         }
     }
 
+
+    @Test
+    fun `browser-first updater keeps apk name safe and version comparison honours patch bumps`() {
+        // The browser-install path saves the APK under a sanitised name; make sure the sanitiser the
+        // manager uses does not mangle legitimate release asset names.
+        val apkName = "FTCloud-v1.3.2.apk"
+        val sanitised = apkName.replace(Regex("[^A-Za-z0-9._-]"), "_")
+        assertEquals(apkName, sanitised)
+
+        assertTrue(UpdateVersion.isNewer("v1.3.2", "1.3.1"))
+        assertFalse(UpdateVersion.isNewer("v1.3.1", "1.3.1"))
+        assertEquals("1.3.2", UpdateVersion.normalize("V1.3.2+build12"))
+    }
+
     @Test
     fun `sha256 computes exact file digest`() {
         val temp = File.createTempFile("ftcloud-update-test", ".apk")

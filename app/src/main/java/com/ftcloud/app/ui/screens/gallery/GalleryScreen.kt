@@ -267,14 +267,38 @@ fun GalleryScreen(
                         }
                     },
                     onImportExportJson = { exportJsonLauncher.launch(arrayOf("application/json", "*/*")) },
-                    onCheckCloudIndex = {},
+                    onCheckCloudIndex = {
+                        if (!isCheckingIndex) {
+                            isCheckingIndex = true
+                            scope.launch {
+                                runCatching {
+                                    repo.syncMultiDeviceCloud(forcePull = true, allowTailFallback = true)
+                                }.onSuccess { merge ->
+                                    val msg = when {
+                                        merge.requiresPassphrase ->
+                                            "Encrypted cloud index found — unlock it in Settings → Security."
+                                        merge.addedFiles > 0 -> "Restored +${merge.addedFiles} cloud items!"
+                                        merge.noRemoteManifest ->
+                                            "No cloud index saved yet — tap Scan Channel Now."
+                                        else -> "Cloud index is up to date"
+                                    }
+                                    snackbarHostState.showSnackbar(msg)
+                                }.onFailure { err ->
+                                    snackbarHostState.showSnackbar(err.message ?: "Restore check failed")
+                                }
+                                isCheckingIndex = false
+                            }
+                        }
+                    },
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
                 )
             }
 
             if (entries.isEmpty()) {
                 Box(
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
                     contentAlignment = Alignment.Center,
                 ) {
                     Column(
@@ -340,7 +364,9 @@ fun GalleryScreen(
             } else {
                 LazyVerticalGrid(
                     columns = GridCells.Fixed(columns),
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
                     contentPadding = PaddingValues(
                         start = 10.dp,
                         top = 8.dp,

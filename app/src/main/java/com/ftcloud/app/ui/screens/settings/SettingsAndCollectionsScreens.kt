@@ -4,6 +4,7 @@ import android.content.Intent
 import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Build
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -43,6 +44,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Logout
 import androidx.compose.material.icons.filled.Animation
 import androidx.compose.material.icons.filled.BlurOn
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CloudSync
 import androidx.compose.material.icons.filled.Compress
 import androidx.compose.material.icons.filled.Download
@@ -54,6 +56,7 @@ import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.TouchApp
+import androidx.compose.material.icons.filled.VerifiedUser
 import androidx.compose.material.icons.filled.Vibration
 import androidx.compose.material.icons.filled.WorkspacePremium
 import androidx.compose.material.icons.outlined.Add
@@ -138,16 +141,24 @@ import com.ftcloud.app.ui.components.expressivePastel
 import com.ftcloud.app.ui.components.readableContentColor
 import com.ftcloud.app.ui.components.springPress
 import com.ftcloud.app.ui.theme.LocalAnimationsEnabled
+import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.File
 
 private sealed interface UpdateStatus {
     data object Idle : UpdateStatus
     data object Checking : UpdateStatus
     data object UpToDate : UpdateStatus
     data class Available(val release: UpdateRelease) : UpdateStatus
+
+    /** Browser-first update flow: the signed APK is already saved into the Downloads folder. */
+    data class SavedToDownloads(
+        val release: UpdateRelease,
+        val location: String,
+        val checksumVerified: Boolean,
+    ) : UpdateStatus
+
     data class Downloading(val release: UpdateRelease, val progress: Int?) : UpdateStatus
     data class Verifying(val release: UpdateRelease) : UpdateStatus
     data class NeedsInstallPermission(val release: UpdateRelease) : UpdateStatus
@@ -311,6 +322,56 @@ fun SettingsScreen(
         }
     }
 
+    fun openUpdateBrowserPage(release: UpdateRelease) {
+        if (release.apkDownloadUrl.isBlank()) return
+        runCatching {
+            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(release.apkDownloadUrl)))
+        }.onFailure {
+            snackbarHostState.showSnackbar("No browser app found to open the GitHub download")
+        }
+    }
+
+    fun openReleaseNotes(release: UpdateRelease) {
+        val url = "https://github.com/ft-sinan/FT-cloud/releases/tag/${release.tagName}"
+        runCatching {
+            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+        }.onFailure {
+            snackbarHostState.showSnackbar("No browser app found to open the release notes")
+        }
+    }
+
+    /** Default, Play-Protect-friendly path: download the signed APK with FT Cloud's own verifier, save it to Downloads. */
+    fun downloadUpdateToDownloads(release: UpdateRelease) {
+        scope.launch {
+            try {
+                val ghToken = container.credentialStore.getGithubUpdateToken()
+                updateStatus = UpdateStatus.Downloading(release, null)
+                val apk = AppUpdateManager.downloadReleaseApk(context, release, githubToken = ghToken) { progress ->
+                    updateStatus = UpdateStatus.Downloading(release, progress)
+                }
+                updateStatus = UpdateStatus.Verifying(release)
+                val verified = AppUpdateManager.verifyChecksum(release, apk, githubToken = ghToken)
+                if (release.checksumDownloadUrl != null && verified != true) {
+                    apk.delete()
+                    updateStatus = UpdateStatus.Failed("SHA-256 checksum verification failed for downloaded APK.")
+                    return@launch
+                }
+                val savedPath = AppUpdateManager.saveApkToDownloads(context, apk, release.apkName)
+                // Keep the verified cache copy so the Advanced opt-in installs instantly instead of
+                // downloading the same APK twice.
+                downloadedUpdateApk = apk
+                updateStatus = UpdateStatus.SavedToDownloads(
+                    release = release,
+                    location = savedPath,
+                    checksumVerified = verified == true,
+                )
+                snackbarHostState.showSnackbar("Saved ${release.apkName} to Downloads")
+            } catch (err: Exception) {
+                updateStatus = UpdateStatus.Failed(err.message ?: "APK download failed.")
+            }
+        }
+    }
+
     LaunchedEffect(settings.lastUpdateCheckAt) {
         if (!autoUpdateCheckStarted &&
             updateStatus == UpdateStatus.Idle &&
@@ -430,18 +491,55 @@ fun SettingsScreen(
                             )
                         }
 
-                        if (updateStatus is UpdateStatus.Available || updateStatus is UpdateStatus.Downloading) {
+                        if (updateStatus is UpdateStatus.Available ||
+                            updateStatus is UpdateStatus.Downloading ||
+                            updateStatus is UpdateStatus.Verifying ||
+                            updateStatus is UpdateStatus.SavedToDownloads
+                        ) {
                             item {
                                 AppUpdateCard(
                                     status = updateStatus,
-                                    hasDownloadedApk = downloadedUpdateApk != null,
-                                    hasPrivateRepoToken = githubUpdateToken.isNotBlank(),
+                                    allowInAppInstaller = settings.allowInAppInstaller,
                                     onCheck = { runUpdateCheck(automatic = false) },
-                                    onDownload = { downloadAndInstallUpdate(it) },
+                                    onDownloadForBrowserInstall = { downloadUpdateToDownloads(it) },
+                                    onOpenBrowserDownload = { openUpdateBrowserPage(it) },
+                                    onOpenReleaseNotes = { openReleaseNotes(it) },
+                                    onEnableInAppInstaller = {
+                                        scope.launch { container.settingsRepository.setAllowInAppInstaller(true) }
+                                        if (AppUpdateManager.canInstallPackages(context)) {
+                                            downloadAndInstallUpdate(it)
+                                        } else {
+                                            // Ask for the per-app "install unknown apps" toggle first,
+                                            // otherwise the installer intent would be silently blocked.
+                                            updateStatus = UpdateStatus.NeedsInstallPermission(it)
+                                        }
+                                    },
+                                    onDisableInAppInstaller = {
+                                        scope.launch { container.settingsRepository.setAllowInAppInstaller(false) }
+                                    },
+                                    onInstallVerifiedApk = { downloadAndInstallUpdate(it) },
                                     onAllowInstalls = {
                                         runCatching { AppUpdateManager.openInstallPermissionSettings(context) }
                                     },
-                                    onConfigurePrivateRepoToken = {
+                                    onInstallFromDownloads = { release, savedPath ->
+                                        scope.launch {
+                                            runCatching {
+                                                AppUpdateManager.openDownloadsApk(context, release.apkName, savedPath)
+                                            }.onFailure { err ->
+                                                snackbarHostState.showSnackbar(
+                                                    err.message ?: "Open Downloads and tap ${release.apkName} to install"
+                                                )
+                                            }
+                                        }
+                                    },
+                                    onOpenDownloadsFolder = {
+                                        runCatching { AppUpdateManager.openDownloadsFolder(context) }
+                                            .onFailure {
+                                                snackbarHostState.showSnackbar("Open your Files app → Downloads to install")
+                                            }
+                                    },
+                                    hasReleaseToken = githubUpdateToken.isNotBlank(),
+                                    onConfigureReleaseToken = {
                                         githubTokenDraft = githubUpdateToken
                                         showGithubTokenDialog = true
                                     },
@@ -1031,6 +1129,21 @@ fun SettingsScreen(
                             )
                         }
 
+                        SecurityScanInfoCard(
+                            allowInAppInstaller = settings.allowInAppInstaller,
+                            onAllowInAppInstallerChange = {
+                                scope.launch { container.settingsRepository.setAllowInAppInstaller(it) }
+                            },
+                            onOpenPlayProtect = {
+                                if (!AppUpdateManager.openPlayProtectSettings(context)) {
+                                    snackbarHostState.showSnackbar(
+                                        "Open Google Play → profile → Play Protect to view scan status"
+                                    )
+                                }
+                            },
+                            snackbarHostState = snackbarHostState,
+                        )
+
                         OrionSectionCard(title = "Channel session", icon = Icons.AutoMirrored.Outlined.Logout) {
                             Text(
                                 text = "Disconnecting signs out this phone only. Your uploaded files and pinned Cloud Index stay untouched inside your private Telegram channel.",
@@ -1138,14 +1251,45 @@ fun SettingsScreen(
 
                         AppUpdateCard(
                             status = updateStatus,
-                            hasDownloadedApk = downloadedUpdateApk != null,
-                            hasPrivateRepoToken = githubUpdateToken.isNotBlank(),
+                            allowInAppInstaller = settings.allowInAppInstaller,
                             onCheck = { runUpdateCheck(automatic = false) },
-                            onDownload = { downloadAndInstallUpdate(it) },
+                            onDownloadForBrowserInstall = { downloadUpdateToDownloads(it) },
+                            onOpenBrowserDownload = { openUpdateBrowserPage(it) },
+                            onOpenReleaseNotes = { openReleaseNotes(it) },
+                            onEnableInAppInstaller = {
+                                scope.launch { container.settingsRepository.setAllowInAppInstaller(true) }
+                                if (AppUpdateManager.canInstallPackages(context)) {
+                                    downloadAndInstallUpdate(it)
+                                } else {
+                                    updateStatus = UpdateStatus.NeedsInstallPermission(it)
+                                }
+                            },
+                            onDisableInAppInstaller = {
+                                scope.launch { container.settingsRepository.setAllowInAppInstaller(false) }
+                            },
+                            onInstallVerifiedApk = { downloadAndInstallUpdate(it) },
                             onAllowInstalls = {
                                 runCatching { AppUpdateManager.openInstallPermissionSettings(context) }
                             },
-                            onConfigurePrivateRepoToken = {
+                            onInstallFromDownloads = { release, savedPath ->
+                                scope.launch {
+                                    runCatching {
+                                        AppUpdateManager.openDownloadsApk(context, release.apkName, savedPath)
+                                    }.onFailure { err ->
+                                        snackbarHostState.showSnackbar(
+                                            err.message ?: "Open Downloads and tap ${release.apkName} to install"
+                                        )
+                                    }
+                                }
+                            },
+                            onOpenDownloadsFolder = {
+                                runCatching { AppUpdateManager.openDownloadsFolder(context) }
+                                    .onFailure {
+                                        snackbarHostState.showSnackbar("Open your Files app → Downloads to install")
+                                    }
+                            },
+                            hasReleaseToken = githubUpdateToken.isNotBlank(),
+                            onConfigureReleaseToken = {
                                 githubTokenDraft = githubUpdateToken
                                 showGithubTokenDialog = true
                             },
@@ -1891,12 +2035,19 @@ fun TrashScreen(
 @Composable
 private fun AppUpdateCard(
     status: UpdateStatus,
-    hasDownloadedApk: Boolean,
-    hasPrivateRepoToken: Boolean,
+    allowInAppInstaller: Boolean,
     onCheck: () -> Unit,
-    onDownload: (UpdateRelease) -> Unit,
+    onDownloadForBrowserInstall: (UpdateRelease) -> Unit,
+    onOpenBrowserDownload: (UpdateRelease) -> Unit,
+    onOpenReleaseNotes: (UpdateRelease) -> Unit,
+    onEnableInAppInstaller: (UpdateRelease) -> Unit,
+    onDisableInAppInstaller: () -> Unit,
+    onInstallVerifiedApk: (UpdateRelease) -> Unit,
     onAllowInstalls: () -> Unit,
-    onConfigurePrivateRepoToken: () -> Unit,
+    onInstallFromDownloads: (UpdateRelease, String) -> Unit,
+    onOpenDownloadsFolder: () -> Unit,
+    hasReleaseToken: Boolean,
+    onConfigureReleaseToken: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -1915,7 +2066,7 @@ private fun AppUpdateCard(
         when (status) {
             UpdateStatus.Idle -> {
                 Text(
-                    text = "Check GitHub Releases for new FT Cloud builds with SHA-256 checksum verification.",
+                    text = "Check GitHub Releases for new FT Cloud builds. Every APK is SHA-256 checksum verified before it reaches your phone.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -1926,6 +2077,10 @@ private fun AppUpdateCard(
                 ) {
                     Text("Check for Updates")
                 }
+                ReleaseTokenRow(
+                    hasReleaseToken = hasReleaseToken,
+                    onConfigureReleaseToken = onConfigureReleaseToken,
+                )
             }
 
             UpdateStatus.Checking -> {
@@ -1961,34 +2116,78 @@ private fun AppUpdateCard(
                 UpdateReleaseDetails(status.release)
                 Spacer(Modifier.height(10.dp))
                 Button(
-                    onClick = { onDownload(status.release) },
+                    onClick = { onDownloadForBrowserInstall(status.release) },
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     Icon(Icons.Filled.Download, contentDescription = null)
                     Spacer(Modifier.width(8.dp))
-                    Text(
-                        if (hasDownloadedApk) {
-                            "Install ${status.release.tagName}"
-                        } else {
-                            "Download & Install ${status.release.tagName}"
-                        }
-                    )
+                    Text("Download ${status.release.tagName} (verified)")
                 }
-                if (!status.release.apkDownloadUrl.isNullOrBlank()) {
-                    Spacer(Modifier.height(6.dp))
+                Spacer(Modifier.height(6.dp))
+                OutlinedButton(
+                    onClick = { onOpenBrowserDownload(status.release) },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("Open in Browser")
+                }
+                Spacer(Modifier.height(10.dp))
+                InstallerModeSelector(
+                    allowInAppInstaller = allowInAppInstaller,
+                    onEnableInAppInstaller = { onEnableInAppInstaller(status.release) },
+                    onDisableInAppInstaller = onDisableInAppInstaller,
+                    onInstallVerifiedApk = { onInstallVerifiedApk(status.release) },
+                )
+            }
+
+            is UpdateStatus.SavedToDownloads -> {
+                Text(
+                    text = "Verified and saved to ${
+                        if (status.location.startsWith("Downloads/")) status.location else "your Downloads folder"
+                    }.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                Text(
+                    text = if (status.checksumVerified) {
+                        "SHA-256 checksum matched the published ${status.release.apkName}.sha256 sidecar."
+                    } else {
+                        "No checksum sidecar was published for this release."
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(10.dp))
+                Button(
+                    onClick = { onInstallFromDownloads(status.release, status.location) },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Icon(Icons.Filled.Download, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Install from Downloads")
+                }
+                Spacer(Modifier.height(6.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(
-                        onClick = {
-                            runCatching {
-                                context.startActivity(
-                                    Intent(Intent.ACTION_VIEW, Uri.parse(status.release.apkDownloadUrl))
-                                )
-                            }
-                        },
-                        modifier = Modifier.fillMaxWidth(),
+                        onClick = onOpenDownloadsFolder,
+                        modifier = Modifier.weight(1f),
                     ) {
-                        Text("Download via Browser (GitHub)")
+                        Text("Open Downloads")
+                    }
+                    OutlinedButton(
+                        onClick = { onOpenReleaseNotes(status.release) },
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Text("Release Notes")
                     }
                 }
+                Spacer(Modifier.height(10.dp))
+                InstallerModeSelector(
+                    allowInAppInstaller = allowInAppInstaller,
+                    onEnableInAppInstaller = { onEnableInAppInstaller(status.release) },
+                    onDisableInAppInstaller = onDisableInAppInstaller,
+                    onInstallVerifiedApk = { onInstallVerifiedApk(status.release) },
+                )
             }
 
             is UpdateStatus.Downloading -> {
@@ -2039,7 +2238,7 @@ private fun AppUpdateCard(
                         Text("Allow Installs")
                     }
                     Button(
-                        onClick = { onDownload(status.release) },
+                        onClick = { onInstallVerifiedApk(status.release) },
                         modifier = Modifier.weight(1f),
                     ) {
                         Text("Install Now")
@@ -2050,7 +2249,7 @@ private fun AppUpdateCard(
             is UpdateStatus.SignatureConflict -> {
                 Text(
                     text = if (status.runningDebugSideBySide) {
-                        "An older FT Cloud build (${status.targetPackage}) with a different signing key is installed alongside this Debug app. Tap 'Remove Old Package' once, then tap 'Install Now' — all future updates will install in-place!"
+                        "An older FT Cloud build (${status.targetPackage}) with a different signing key is installed alongside this Debug app. Open its App Info once, then tap 'Install Now' — all future updates will install in-place!"
                     } else {
                         val dlNote = status.savedDownloadsPath?.let { " Saved verified APK to $it." }.orEmpty()
                         "Your current install was signed with an earlier key, so Android requires a one-time clean install before seamless in-place updates work.$dlNote Your Cloud Index is already synced in Telegram!"
@@ -2068,7 +2267,7 @@ private fun AppUpdateCard(
                     }
                     if (status.runningDebugSideBySide) {
                         Button(
-                            onClick = { onDownload(status.release) },
+                            onClick = { onInstallVerifiedApk(status.release) },
                             modifier = Modifier.weight(1f),
                         ) {
                             Text("Install Now")
@@ -2083,28 +2282,315 @@ private fun AppUpdateCard(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.error,
                 )
-                val isAuthOrNotFound = status.errorText.contains("401") ||
-                    status.errorText.contains("403") ||
-                    status.errorText.contains("404")
                 Spacer(Modifier.height(10.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(
-                        onClick = onCheck,
-                        modifier = Modifier.weight(1f),
-                    ) {
-                        Text("Retry Check")
-                    }
-                    if (isAuthOrNotFound || hasPrivateRepoToken) {
-                        FilledTonalButton(
-                            onClick = onConfigurePrivateRepoToken,
-                            modifier = Modifier.weight(1f),
-                        ) {
-                            Text(if (hasPrivateRepoToken) "Edit Token" else "GitHub Token")
-                        }
-                    }
+                OutlinedButton(
+                    onClick = onCheck,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("Retry Check")
                 }
+                ReleaseTokenRow(
+                    hasReleaseToken = hasReleaseToken,
+                    onConfigureReleaseToken = onConfigureReleaseToken,
+                )
             }
         }
+    }
+}
+
+@Composable
+private fun ReleaseTokenRow(
+    hasReleaseToken: Boolean,
+    onConfigureReleaseToken: () -> Unit,
+) {
+    Spacer(Modifier.height(4.dp))
+    TextButton(
+        onClick = onConfigureReleaseToken,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Icon(Icons.Filled.Lock, contentDescription = null, modifier = Modifier.size(15.dp))
+        Spacer(Modifier.width(6.dp))
+        Text(
+            if (hasReleaseToken) "Update release access token" else "Add release access token"
+        )
+    }
+    Text(
+        text = if (hasReleaseToken) {
+            "A read-only token is saved, so FT Cloud can also read releases from a fork."
+        } else {
+            "Only needed when the release repository requires authentication."
+        },
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+}
+
+/**
+ * Replaces the old "unused hasPrivateRepoToken / silent GitHub token" block: the private-repo token
+ * lever is now a working row that always reflects state instead of a sometimes-dead button.
+ */
+@Composable
+private fun InstallerModeSelector(
+    allowInAppInstaller: Boolean,
+    onEnableInAppInstaller: () -> Unit,
+    onDisableInAppInstaller: () -> Unit,
+    onInstallVerifiedApk: () -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(18.dp))
+            .background(MaterialTheme.colorScheme.surfaceContainer)
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+    ) {
+        if (allowInAppInstaller) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    Icons.Filled.Security,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(18.dp),
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = "In-app installer · Advanced",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+            Text(
+                text = "FT Cloud opens Android's package installer directly. Some Play Protect builds flag apps that install APKs, so switch this off if you see a warning.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(
+                    onClick = onInstallVerifiedApk,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text("Install in App")
+                }
+                TextButton(
+                    onClick = onDisableInAppInstaller,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text("Use Downloads")
+                }
+            }
+        } else {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    Icons.Filled.Lock,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(18.dp),
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = "Browser download mode (recommended)",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+            Text(
+                text = "FT Cloud verifies the APK and hands it to your Downloads folder, so Android and Play Protect install it themselves. Advanced users can opt in to the in-app installer.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(4.dp))
+            TextButton(
+                onClick = onEnableInAppInstaller,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Advanced: install inside FT Cloud")
+            }
+        }
+    }
+}
+
+/**
+ * Makes FT Cloud's security posture inspectable instead of claimed: package, signer fingerprint,
+ * permission surface, and the Play Protect relevant installer switch.
+ */
+@Composable
+private fun SecurityScanInfoCard(
+    allowInAppInstaller: Boolean,
+    onAllowInAppInstallerChange: (Boolean) -> Unit,
+    onOpenPlayProtect: () -> Unit,
+    snackbarHostState: SnackbarHostState,
+) {
+    val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
+    val signingSha256 = remember {
+        AppUpdateManager.installedSigningSha256(context)
+    }
+
+    OrionSectionCard(title = "Security scan", icon = Icons.Filled.VerifiedUser) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                Icons.Filled.CheckCircle,
+                contentDescription = null,
+                tint = Color(0xFF2E7D32),
+                modifier = Modifier.size(20.dp),
+            )
+            Spacer(Modifier.width(8.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Safe install profile",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    text = "No readable obfuscation · no audio or SMS access · no background package installs unless you opt in.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+
+        Spacer(Modifier.height(12.dp))
+        FingerprintRow(label = "Package", value = context.packageName)
+        FingerprintRow(label = "Version", value = "v${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
+        FingerprintRow(
+            label = "Signer SHA-256",
+            value = signingSha256?.chunked(32)?.joinToString("\n") ?: "Unavailable",
+            trailing = {
+                TextButton(
+                    onClick = {
+                        val text = signingSha256 ?: return@TextButton
+                        clipboard.setText(
+                            AnnotatedString(
+                                "FT Cloud ${BuildConfig.VERSION_NAME}\n" +
+                                    "package: ${context.packageName}\n" +
+                                    "cert-sha256: $text"
+                            )
+                        )
+                        Toast.makeText(context, "Signing fingerprint copied", Toast.LENGTH_SHORT).show()
+                    }
+                ) {
+                    Text("Copy")
+                }
+            },
+        )
+
+        Spacer(Modifier.height(10.dp))
+        Text(
+            text = "Permissions requested",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Text(
+            text = "Internet · network state · notifications · foreground data sync · photos & videos (optional, for Auto Backup) · biometrics · streaming cache.",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+
+        Spacer(Modifier.height(12.dp))
+        HorizontalDivider()
+        Spacer(Modifier.height(10.dp))
+
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Allow in-app APK installer",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium,
+                )
+                Text(
+                    text = "Off = updates are downloaded and verified, then installed by Android from Downloads (best Play Protect behaviour).",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Spacer(Modifier.width(10.dp))
+            Switch(
+                checked = allowInAppInstaller,
+                onCheckedChange = onAllowInAppInstallerChange,
+            )
+        }
+
+        Spacer(Modifier.height(10.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(
+                onClick = onOpenPlayProtect,
+                modifier = Modifier.weight(1f),
+            ) {
+                Text("Check in Play Protect")
+            }
+            OutlinedButton(
+                onClick = {
+                    runCatching {
+                        context.startActivity(
+                            Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/ft-sinan/FT-cloud/releases"))
+                        )
+                    }
+                },
+                modifier = Modifier.weight(1f),
+            ) {
+                Text("Verify on GitHub")
+            }
+        }
+
+        Spacer(Modifier.height(6.dp))
+        TextButton(
+            onClick = {
+                val sha = signingSha256 ?: "unavailable"
+                val report = buildString {
+                    appendLine("FT Cloud ${BuildConfig.VERSION_NAME} — Play Protect appeal")
+                    appendLine()
+                    appendLine("App name: FT Cloud")
+                    appendLine("Package: com.ftcloud.app")
+                    appendLine("Version: ${BuildConfig.VERSION_NAME} (versionCode ${BuildConfig.VERSION_CODE})")
+                    appendLine("Download: https://github.com/ft-sinan/FT-cloud/releases/tag/v${BuildConfig.VERSION_NAME}")
+                    appendLine("Certificate SHA-256: $sha")
+                    appendLine("Source: https://github.com/ft-sinan/FT-cloud")
+                    appendLine()
+                    appendLine("FT Cloud is open source. It talks only to api.telegram.org using user-supplied bot tokens.")
+                    appendLine("It requests no audio, contacts, SMS or accessibility access, ships unobfuscated classes, and")
+                    appendLine("does not install other APKs: updates are downloaded from this project's GitHub Releases,")
+                    appendLine("SHA-256 verified against a published sidecar, and installed by Android itself.")
+                }
+                clipboard.setText(AnnotatedString(report))
+                snackbarHostState.showSnackbar(
+                    "Appeal text copied — paste it into Google's Play Protect Appeal form"
+                )
+            },
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Icon(Icons.Outlined.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
+            Spacer(Modifier.width(6.dp))
+            Text("Copy Play Protect appeal details")
+        }
+    }
+}
+
+@Composable
+private fun FingerprintRow(
+    label: String,
+    value: String,
+    trailing: @Composable (() -> Unit)? = null,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.width(96.dp),
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.Medium,
+            modifier = Modifier.weight(1f),
+        )
+        trailing?.invoke()
     }
 }
 
